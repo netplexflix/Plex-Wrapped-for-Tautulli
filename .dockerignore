@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-server
+.git
+.github
+*.zip
+*.log

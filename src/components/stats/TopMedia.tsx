@@ -1,17 +1,15 @@
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import { TopMediaReveal } from "./TopMediaReveal";
-import { TautulliConfig } from "@/types/tautulli";
 import { getImageUrl } from "@/lib/tautulli";
 
 interface TopMediaProps {
   topMovie: { title: string; year: number; watchCount: number; totalTime: number; thumb?: string; userCount?: number } | null;
   topShow: { title: string; watchCount: number; totalTime: number; episodeCount: number; thumb?: string; userCount?: number } | null;
-  config?: TautulliConfig;
   skipAnimations?: boolean;
 }
 
-export const TopMedia = ({ topMovie, topShow, config, skipAnimations = false }: TopMediaProps) => {
+export const TopMedia = ({ topMovie, topShow, skipAnimations = false }: TopMediaProps) => {
   return (
     <div className="space-y-8">
       <div className="text-center mb-8">
@@ -37,7 +35,7 @@ export const TopMedia = ({ topMovie, topShow, config, skipAnimations = false }: 
             watchTime={topMovie.totalTime}
             playCount={topMovie.watchCount}
             userCount={topMovie.userCount}
-            imageUrl={config && topMovie.thumb ? getImageUrl(config, topMovie.thumb) : undefined}
+            imageUrl={topMovie.thumb ? getImageUrl(topMovie.thumb) : undefined}
             skipAnimations={skipAnimations}
           />
         )}
@@ -50,7 +48,7 @@ export const TopMedia = ({ topMovie, topShow, config, skipAnimations = false }: 
             watchTime={topShow.totalTime}
             playCount={topShow.watchCount}
             userCount={topShow.userCount}
-            imageUrl={config && topShow.thumb ? getImageUrl(config, topShow.thumb) : undefined}
+            imageUrl={topShow.thumb ? getImageUrl(topShow.thumb) : undefined}
             skipAnimations={skipAnimations}
           />
         )}

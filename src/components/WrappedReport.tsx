@@ -1,19 +1,19 @@
 // src/components/WrappedReport.tsx
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { format } from "date-fns";
-import { motion, AnimatePresence } from "framer-motion";
-import { RefreshCw, Settings, Loader2, ChevronDown, X, Shield, Download } from "lucide-react";
+import { motion } from "framer-motion";
+import { RefreshCw, Settings, Loader2, ChevronDown, X, Shield, Download, LogOut, Database, MonitorSmartphone, Share } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { UserSelector } from "./UserSelector";
 import { UsernameInput } from "./UsernameInput";
 import {
   YearSelector,
   YearSelection,
-  getDateRangeFromSelection,
   getDisplayYear,
   getDefaultYear,
   getYearsCount,
+  toPeriod,
 } from "./YearSelector";
 import { TotalStats } from "./stats/TotalStats";
 import { TopMedia } from "./stats/TopMedia";
@@ -34,11 +34,12 @@ import { PeakConcurrent } from "./stats/PeakConcurrent";
 import { GeoLocationStats } from "./stats/GeoLocationStats";
 import { AdminPanel } from "./AdminPanel";
 import { ExportableStorySlides } from "./ExportableStorySlides";
-import { TautulliConfig, TautulliUser, WrappedStats, UserStats, WatchHistory, StreamingLocation } from "@/types/tautulli";
-import { getUsers, getHistory, calculateWrappedStats, fetchMetadataStats, getOldestHistoryYear } from "@/lib/tautulli";
-import { extractUniqueIPs, geolocateIPs, GeoLocationProgress } from "@/lib/geolocation";
-import { AdminSettings } from "@/lib/adminStorage";
+import { TautulliUser, StreamingLocation } from "@/types/tautulli";
+import type { ApiUser, BuildingResponse, PublicConfig, ReportResponse, SessionInfo } from "@/types/api";
+import { api, ApiError, isBuilding } from "@/lib/api";
 import { getServerAdminSettings } from "@/lib/serverConfig";
+import { getDisplayTitle } from "@/lib/adminStorage";
+import { isIos, isStandalone, useInstallPrompt } from "@/lib/pwa";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
 import JSZip from "jszip";
@@ -47,236 +48,153 @@ import { createRoot } from "react-dom/client";
 import { CustomLogo } from "./CustomLogo";
 
 interface WrappedReportProps {
-  config: TautulliConfig | null;
-  onDisconnect?: () => void;
+  publicConfig: PublicConfig;
+  session: SessionInfo;
+  onRefresh: () => Promise<void> | void;
 }
 
-export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
-  if (!config) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold mb-2">
-            Plex Wrapped is not configured yet
-          </h2>
-          <p className="text-muted-foreground">
-            Please contact the server administrator.
-          </p>
-        </div>
-      </div>
-    );
-  }
+export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedReportProps) => {
+  const adminSettings = { ...getServerAdminSettings(), ...publicConfig.settings };
+  const mode = adminSettings.accessMode;
+  const canViewAnyone = session.canViewAnyone;
+  const viewer = session.viewer;
 
-  const [users, setUsers] = useState<TautulliUser[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [users, setUsers] = useState<ApiUser[]>([]);
+  // null = everyone. Signed-in viewers start on their own stats.
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(viewer && !canViewAnyone ? viewer.userId : null);
+  // Discreet mode: the user the visitor identified as (to switch back from "Everyone")
+  const [ownUserId, setOwnUserId] = useState<number | null>(viewer?.userId ?? null);
   const [yearSelection, setYearSelection] = useState<YearSelection>({
     type: "year",
-    year: getDefaultYear(),
+    year: getDefaultYear(adminSettings.currentYearFrom),
   });
-  const [oldestYear, setOldestYear] = useState<number | undefined>(undefined);
-  const [stats, setStats] = useState<WrappedStats | null>(null);
-  const [allUserStats, setAllUserStats] = useState<UserStats[]>([]);
+  const [report, setReport] = useState<ReportResponse | null>(null);
+  const [building, setBuilding] = useState<BuildingResponse | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [adminSettings, setAdminSettings] = useState<AdminSettings>(getServerAdminSettings());
-  const [userAuthenticated, setUserAuthenticated] = useState(false);
   const [isExportingSlides, setIsExportingSlides] = useState(false);
-  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const { canInstall, install } = useInstallPrompt();
 
   // Geolocation state
   const [geoLocations, setGeoLocations] = useState<StreamingLocation[]>([]);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoTotalIPs, setGeoTotalIPs] = useState(0);
-  const [geoProcessedIPs, setGeoProcessedIPs] = useState(0);
-  const historyRef = useRef<WatchHistory[]>([]);
 
-  // Get the display title based on settings
-  const getTitle = () => {
-    if (adminSettings.useCustomTitle && adminSettings.customTitle) {
-      return adminSettings.customTitle;
-    }
-    return "Plex Wrapped";
-  };
+  const requestIdRef = useRef(0);
+  const stats = report?.stats ?? null;
+  const oldestYear = report?.oldestYear ?? undefined;
+  const period = toPeriod(yearSelection);
 
-  useEffect(() => {
-    if (showControls) {
-      const freshSettings = getServerAdminSettings();
-      setAdminSettings(freshSettings);
-    }
-  }, [showControls]);
+  // Everyone's stats can be shown to privileged viewers, or to anyone when "All Users" is allowed
+  const allowEveryone = canViewAnyone || adminSettings.allowAllUsers;
+  const canLoad = selectedUserId !== null || allowEveryone;
+
+  const getTitle = () => getDisplayTitle(adminSettings);
 
   useEffect(() => {
-    const loadUsersAndOldestYear = async () => {
-      const [fetchedUsers, oldest] = await Promise.all([getUsers(config), getOldestHistoryYear(config)]);
-      setUsers(fetchedUsers);
-      if (oldest) setOldestYear(oldest);
-    };
-    loadUsersAndOldestYear();
-  }, [config]);
-
-  // Geolocation effect - runs when stats are loaded and geolocation is enabled
-  useEffect(() => {
-    if (!adminSettings.enableGeolocation || historyRef.current.length === 0) {
-      setGeoLocations([]);
-      setGeoTotalIPs(0);
-      setGeoProcessedIPs(0);
-      return;
-    }
-
-    const runGeolocation = async () => {
-      setGeoLoading(true);
-      setGeoLocations([]);
-
-      const ipData = extractUniqueIPs(historyRef.current);
-      setGeoTotalIPs(ipData.size);
-      setGeoProcessedIPs(0);
-
-      if (ipData.size === 0) {
-        setGeoLoading(false);
-        return;
-      }
-
-      const handleProgress = (progress: GeoLocationProgress) => {
-        setGeoLocations(progress.locations);
-        setGeoProcessedIPs(progress.processed);
-        if (progress.done) {
-          setGeoLoading(false);
-        }
-      };
-
-      await geolocateIPs(ipData, handleProgress);
-    };
-
-    runGeolocation();
-  }, [adminSettings.enableGeolocation, stats]);
+    if (!canViewAnyone) return;
+    api
+      .users()
+      .then(setUsers)
+      .catch(() => setUsers([]));
+  }, [canViewAnyone]);
 
   const loadStats = useCallback(async () => {
-    // Determine if we should load stats
-    const shouldLoadAllUsers = adminSettings.discreetMode && adminSettings.allowAllUsersInDiscreetMode && selectedUserId === null;
-    const shouldLoadSelectedUser = selectedUserId !== null;
-    const shouldLoadNonDiscreet = !adminSettings.discreetMode;
-
-    // Don't load stats if in discreet mode without allowAllUsersInDiscreetMode and no user selected
-    if (adminSettings.discreetMode && !adminSettings.allowAllUsersInDiscreetMode && selectedUserId === null) {
-      return;
-    }
-
-    // Don't load stats if password protection is enabled and user not authenticated
-    if (adminSettings.passwordProtectUsers && !userAuthenticated && selectedUserId !== null) {
-      return;
-    }
+    if (!canLoad) return;
+    const requestId = ++requestIdRef.current;
+    const query = { user: selectedUserId ?? ("all" as const), period };
 
     setIsLoading(true);
-    // Reset geolocation state
     setGeoLocations([]);
     setGeoTotalIPs(0);
-    setGeoProcessedIPs(0);
-    historyRef.current = [];
+    setGeoLoading(false);
 
     try {
-      const { startDate, endDate } = getDateRangeFromSelection(yearSelection);
-      const startStr = format(startDate, "yyyy-MM-dd");
-      const endStr = format(endDate, "yyyy-MM-dd");
-      
-      // Get normalization setting
-      const normalizeAnomalies = adminSettings.normalizeTautulliAnomalies || false;
-      
-      if (selectedUserId !== null) {
-        const history = await getHistory(config, selectedUserId, startStr, endStr, 5000, normalizeAnomalies);
-        historyRef.current = history; // Store for geolocation
-        const calculatedStats = calculateWrappedStats(history);
-        
-        fetchMetadataStats(config, history).then((metaStats) => {
-          setStats((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  ...metaStats,
-                }
-              : prev,
-          );
-        });
-        
-        setStats(calculatedStats);
-        setAllUserStats([]);
-      } else {
-        const allHistory = await getHistory(config, undefined, startStr, endStr, 5000, normalizeAnomalies);
-        historyRef.current = allHistory; // Store for geolocation
-        const overallStats = calculateWrappedStats(allHistory);
-        
-        fetchMetadataStats(config, allHistory).then((metaStats) => {
-          setStats((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  ...metaStats,
-                }
-              : prev,
-          );
-        });
-        
-        setStats(overallStats);
-        
-        const userHistories: Record<
-          number,
-          {
-            history: WatchHistory[];
-            friendlyName: string;
-            username: string;
-          }
-        > = {};
-        
-        allHistory.forEach((h) => {
-          if (!userHistories[h.user_id]) {
-            userHistories[h.user_id] = {
-              history: [],
-              friendlyName: h.friendly_name || h.user || "Unknown",
-              username: h.user || "unknown",
-            };
-          }
-          userHistories[h.user_id].history.push(h);
-        });
-        
-        const userStatsArray: UserStats[] = Object.entries(userHistories).map(([id, userData]) => {
-          const userStats = calculateWrappedStats(userData.history);
-          return {
-            ...userStats,
-            userId: parseInt(id),
-            username: userData.username,
-            friendlyName: userData.friendlyName,
-          };
-        });
-        
-        setAllUserStats(userStatsArray);
+      const result = await api.report(query);
+      if (requestId !== requestIdRef.current) return;
+      setBuilding(null);
+      setReport(result);
+      setIsLoading(false);
+
+      if (adminSettings.enableGeolocation) {
+        setGeoLoading(true);
+        try {
+          const geo = await api.reportLocations(query);
+          if (requestId !== requestIdRef.current) return;
+          setGeoLocations(geo.locations);
+          setGeoTotalIPs(geo.totalIPs);
+        } catch (error) {
+          console.warn("Failed to load streaming locations:", error);
+        } finally {
+          if (requestId === requestIdRef.current) setGeoLoading(false);
+        }
       }
     } catch (error) {
-      toast.error("Failed to load watch history");
+      if (requestId !== requestIdRef.current) return;
+      setIsLoading(false);
+      if (isBuilding(error)) {
+        // First run: the server is still building its history cache
+        setBuilding(error.data);
+        setTimeout(() => setRetryTick((t) => t + 1), 3000);
+        return;
+      }
+      setBuilding(null);
+      if (error instanceof ApiError && error.status === 401) {
+        if (error.data?.needsLogin) {
+          onRefresh();
+          return;
+        }
+        if (error.data?.needsPassword) {
+          toast.error("Please enter your username and password");
+          setSelectedUserId(null);
+          setOwnUserId(null);
+          setReport(null);
+          setShowControls(true);
+          return;
+        }
+      }
+      toast.error(error instanceof ApiError ? error.message : "Failed to load watch history");
       console.error(error);
     }
-    setIsLoading(false);
-    setInitialLoadDone(true);
-  }, [config, selectedUserId, yearSelection, adminSettings.discreetMode, adminSettings.allowAllUsersInDiscreetMode, adminSettings.passwordProtectUsers, adminSettings.normalizeTautulliAnomalies, userAuthenticated]);
+  }, [canLoad, selectedUserId, period, adminSettings.enableGeolocation, onRefresh]);
 
   useEffect(() => {
-    // Determine when to auto-load stats
-    const shouldAutoLoad = 
-      // Non-discreet mode: always auto-load
-      !adminSettings.discreetMode ||
-      // Discreet mode with allowAllUsersInDiscreetMode: auto-load "All Users"
-      (adminSettings.discreetMode && adminSettings.allowAllUsersInDiscreetMode && selectedUserId === null) ||
-      // Discreet mode with a selected user (and authenticated if password protection is on)
-      (adminSettings.discreetMode && selectedUserId !== null && (!adminSettings.passwordProtectUsers || userAuthenticated));
-
-    if (shouldAutoLoad) {
-      loadStats();
-    }
-  }, [loadStats, adminSettings.discreetMode, adminSettings.allowAllUsersInDiscreetMode, adminSettings.passwordProtectUsers, selectedUserId, userAuthenticated]);
+    loadStats();
+    // retryTick re-runs the request while the cache is being built
+  }, [loadStats, retryTick]);
 
   const handleUserSelect = (userId: number | null) => {
     setSelectedUserId(userId);
-    setUserAuthenticated(userId !== null);
   };
+
+  const handleDiscreetUser = (userId: number) => {
+    setOwnUserId(userId);
+    setSelectedUserId(userId);
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await api.logout();
+    } finally {
+      await onRefresh();
+    }
+  };
+
+  const handleAdminSignOut = async () => {
+    try {
+      await api.admin.logout();
+    } finally {
+      await onRefresh();
+    }
+  };
+
+  // Signed in to the Admin Panel in Discreet/Plex mode: make it obvious why everyone is visible
+  const showAdminBadge = session.isAdmin && mode !== "regular";
+
+  // iOS has no install prompt: point to Share > Add to Home Screen instead
+  const showIosInstallHint = isIos() && !isStandalone();
 
   const scrollToContent = () => {
     window.scrollTo({
@@ -285,19 +203,26 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
     });
   };
 
+  const reportUser: TautulliUser | null = report?.user
+    ? {
+        user_id: report.user.user_id,
+        username: report.user.username,
+        friendly_name: report.user.friendly_name,
+        thumb: report.user.thumb,
+      }
+    : null;
+
   const handleExportSlides = async () => {
-    const selectedUser = selectedUserId !== null ? users.find((u) => u.user_id === selectedUserId) : null;
-    
-    if (!stats || !selectedUser || selectedUserId === null) {
+    if (!stats || !reportUser || selectedUserId === null) {
       toast.error("Please select a user first");
       return;
     }
 
     setIsExportingSlides(true);
-    
+
     try {
       const displayYear = getDisplayYear(yearSelection);
-      const userName = selectedUser.friendly_name || selectedUser.username;
+      const userName = reportUser.friendly_name || reportUser.username;
       const safeFileName = userName.replace(/[^a-zA-Z0-9]/g, "_");
       const title = getTitle();
 
@@ -311,14 +236,13 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
       document.body.appendChild(tempContainer);
 
       const root = createRoot(tempContainer);
-      
+
       await new Promise<void>((resolve) => {
         root.render(
           <ExportableStorySlides
-            user={selectedUser}
+            user={reportUser}
             stats={stats}
             yearSelection={yearSelection}
-            config={config!}
             geoLocations={adminSettings.enableGeolocation ? geoLocations : []}
             onReady={() => {
               setTimeout(resolve, 500);
@@ -348,7 +272,7 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
 
       for (let i = 0; i < slides.length; i++) {
         const slideElement = slides[i] as HTMLElement;
-        
+
         const canvas = await html2canvas(slideElement, {
           backgroundColor: '#0a0a0f',
           scale: 2,
@@ -390,22 +314,53 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
     }
   };
 
-  const selectedUser = selectedUserId !== null ? users.find((u) => u.user_id === selectedUserId) : null;
-  const displayName = selectedUser?.friendly_name || selectedUser?.username || "Everyone";
+  const selectedUserName =
+    selectedUserId === null
+      ? null
+      : report?.user?.user_id === selectedUserId
+        ? report.user.friendly_name || report.user.username
+        : users.find((u) => u.user_id === selectedUserId)?.friendly_name || (viewer?.userId === selectedUserId ? viewer.name : null);
+  const displayName = selectedUserId === null ? "Everyone" : selectedUserName || "Your";
   const displayYear = getDisplayYear(yearSelection);
   const isAllTime = yearSelection.type === "alltime";
   const yearsCount = getYearsCount(oldestYear);
   const title = getTitle();
+  const leaderboard = report?.leaderboard ?? [];
 
-  // Show welcome screen if in discreet mode without allowAllUsersInDiscreetMode and no user selected
-  const showWelcomeScreen = adminSettings.discreetMode && !adminSettings.allowAllUsersInDiscreetMode && selectedUserId === null && !stats;
+  // Welcome screen: discreet mode without "All Users" before a username was entered
+  const showWelcomeScreen = !canLoad && !stats;
+
+  // "My stats / Everyone" toggle for signed-in (Plex) or identified (Discreet) viewers
+  const myUserId = mode === "plex" ? viewer?.userId ?? null : ownUserId;
+  const showScopeToggle = !canViewAnyone && adminSettings.allowAllUsers && myUserId !== null;
+
+  const renderScopeToggle = (className: string) => (
+    <div className={`flex rounded-lg border border-border p-1 bg-card ${className}`}>
+      <Button
+        size="sm"
+        variant={selectedUserId !== null ? "default" : "ghost"}
+        className="flex-1"
+        onClick={() => setSelectedUserId(myUserId)}
+      >
+        My stats
+      </Button>
+      <Button
+        size="sm"
+        variant={selectedUserId === null ? "default" : "ghost"}
+        className="flex-1"
+        onClick={() => setSelectedUserId(null)}
+      >
+        Everyone
+      </Button>
+    </div>
+  );
 
   return (
     <div className="min-h-screen">
       <div className="fixed inset-0 bg-noise pointer-events-none z-0" />
 
-      {/* Hero Section */}
-      <section className="min-h-screen flex flex-col items-center justify-center relative px-4">
+      {/* Hero Section (padding keeps the content clear of the admin badge and the scroll arrow) */}
+      <section className="min-h-screen flex flex-col items-center justify-center relative px-4 pt-16 pb-28">
         <motion.div
           initial={{
             opacity: 0,
@@ -507,7 +462,7 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
                 }}
                 className="text-sm font-medium text-primary mb-4 tracking-wider uppercase"
               >
-                {displayName}'s
+                {displayName === "Your" ? "Your" : `${displayName}'s`}
               </motion.div>
               <motion.h1
                 initial={{
@@ -555,6 +510,32 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
               >
                 Let's see what you've been watching
               </motion.p>
+              {showScopeToggle && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.7 }}
+                  className="mt-6 flex justify-center"
+                >
+                  {renderScopeToggle("w-64")}
+                </motion.div>
+              )}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.8 }}
+                className={`${showScopeToggle ? "mt-3" : "mt-6"} flex justify-center`}
+              >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowControls(true)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Settings className="w-4 h-4 mr-2" />
+                  Settings
+                </Button>
+              </motion.div>
             </>
           )}
         </motion.div>
@@ -583,86 +564,100 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
           </motion.div>
         )}
 
-        <motion.div
-          initial={{
-            opacity: 0,
-          }}
-          animate={{
-            opacity: 1,
-          }}
-          transition={{
-            delay: 0.8,
-          }}
-          className="absolute top-4 right-4 flex items-center gap-2"
-        >
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowControls(!showControls)}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <Settings className="w-4 h-4 mr-2" />
-            Settings
-          </Button>
-        </motion.div>
-
-        <AnimatePresence>
-          {showControls && (
-            <motion.div
-              initial={{
-                opacity: 0,
-                y: -10,
-                scale: 0.95,
-              }}
-              animate={{
-                opacity: 1,
-                y: 0,
-                scale: 1,
-              }}
-              exit={{
-                opacity: 0,
-                y: -10,
-                scale: 0.95,
-              }}
-              className="absolute top-16 right-4 stat-card p-4 space-y-4 z-50 min-w-[300px]"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold text-foreground">Settings</span>
-                <Button variant="ghost" size="icon" onClick={() => setShowControls(false)}>
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              {adminSettings.discreetMode ? (
-                <UsernameInput
-                  users={users}
-                  onSelectUser={handleUserSelect}
-                  passwordProtectionEnabled={adminSettings.passwordProtectUsers}
-                />
-              ) : (
-                <UserSelector users={users} selectedUserId={selectedUserId} onSelectUser={handleUserSelect} />
-              )}
-              <YearSelector selection={yearSelection} onSelectionChange={setYearSelection} oldestYear={oldestYear} />
-              <div className="flex gap-2 pt-2">
-                <Button onClick={loadStats} disabled={isLoading} size="sm" className="flex-1">
-                  <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-                  Refresh
-                </Button>
-                <Button onClick={() => setShowAdminPanel(true)} variant="outline" size="sm">
-                  <Shield className="w-4 h-4" />
-                </Button>
-                {onDisconnect && (
-                  <Button onClick={onDisconnect} variant="outline" size="sm">
-                    Disconnect
-                  </Button>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {showAdminBadge && (
+          <div className="absolute top-4 left-4 z-40 flex items-center gap-2 rounded-full border border-primary/40 bg-card/80 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur">
+            <Shield className="w-3.5 h-3.5 text-primary" />
+            <span>
+              <span className="text-foreground font-medium">Admin view</span>: all users are visible
+            </span>
+            <button onClick={handleAdminSignOut} className="text-primary hover:underline">
+              Sign out
+            </button>
+          </div>
+        )}
       </section>
 
+      {/* Settings: a centred dialog, so it never covers part of the report on small screens */}
+      <Dialog open={showControls} onOpenChange={setShowControls}>
+        <DialogContent
+          hideClose
+          className="w-[calc(100%-2rem)] max-w-sm sm:max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto border-0 bg-transparent p-0 shadow-none"
+        >
+          {/* min-w-0: the dialog is a grid, so without it wide content stretches the card past the dialog */}
+          <div className="stat-card min-w-0 space-y-4">
+            <div className="flex items-center justify-between">
+              <DialogTitle className="text-base">Settings</DialogTitle>
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon" aria-label="Close settings">
+                  <X className="w-4 h-4" />
+                </Button>
+              </DialogClose>
+            </div>
+            <DialogDescription className="sr-only">Choose whose stats to show and for which period</DialogDescription>
+            {viewer?.kind === "plex" && (
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="min-w-0 break-words text-muted-foreground">
+                  Signed in as <span className="text-foreground font-medium">{viewer.name}</span>
+                  {viewer.owner ? " (server owner)" : ""}
+                </span>
+                <Button variant="ghost" size="sm" onClick={handleSignOut} className="shrink-0">
+                  <LogOut className="w-4 h-4 mr-1" />
+                  Sign out
+                </Button>
+              </div>
+            )}
+            {canViewAnyone ? (
+              <UserSelector users={users} selectedUserId={selectedUserId} onSelectUser={handleUserSelect} />
+            ) : mode === "discreet" ? (
+              <UsernameInput onSelectUser={handleDiscreetUser} />
+            ) : null}
+            {showScopeToggle && renderScopeToggle("w-full")}
+            <YearSelector selection={yearSelection} onSelectionChange={setYearSelection} oldestYear={oldestYear} />
+            <div className="flex gap-2 pt-2">
+              <Button onClick={loadStats} disabled={isLoading || !canLoad} size="sm" className="flex-1">
+                <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowControls(false);
+                  setShowAdminPanel(true);
+                }}
+                variant="outline"
+                size="sm"
+                aria-label="Admin panel"
+              >
+                <Shield className="w-4 h-4" />
+              </Button>
+            </div>
+            {canInstall ? (
+              <Button variant="ghost" size="sm" onClick={install} className="w-full text-muted-foreground hover:text-foreground">
+                <MonitorSmartphone className="w-4 h-4 mr-2" />
+                Install app
+              </Button>
+            ) : showIosInstallHint ? (
+              <p className="flex flex-wrap items-center justify-center gap-1 text-xs text-muted-foreground">
+                To install, tap <Share className="w-3.5 h-3.5" aria-label="Share" /> then "Add to Home Screen"
+              </p>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Stats Sections */}
-      {isLoading ? (
+      {building ? (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center stat-card max-w-md mx-4">
+            <Database className="w-10 h-10 text-primary mx-auto mb-4 animate-pulse" />
+            <p className="text-foreground text-lg font-semibold mb-2">Building the stats cache for the first time</p>
+            <p className="text-muted-foreground">
+              {building.phase}
+              {building.rows > 0 ? ` (${building.rows.toLocaleString()} sessions so far)` : ""}…
+            </p>
+            <p className="text-xs text-muted-foreground/70 mt-3">This only happens once. The report will appear automatically.</p>
+          </div>
+        </div>
+      ) : isLoading ? (
         <div className="min-h-screen flex items-center justify-center">
           <div className="text-center">
             <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto mb-4" />
@@ -683,7 +678,7 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
           </section>
           {(stats.topMovie || stats.topShow) && (
             <section>
-              <TopMedia topMovie={stats.topMovie} topShow={stats.topShow} config={config} />
+              <TopMedia topMovie={stats.topMovie} topShow={stats.topShow} />
             </section>
           )}
           {(stats.topMovies.length > 0 || stats.topShows.length > 0) && (
@@ -735,19 +730,14 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
               isAllTime={isAllTime}
             />
           </section>
-          
+
           {/* Geolocation Section - After Journey, Before Platforms */}
           {adminSettings.enableGeolocation && (geoLocations.length > 0 || geoLoading || geoTotalIPs > 0) && (
             <section>
-              <GeoLocationStats
-                locations={geoLocations}
-                isLoading={geoLoading}
-                totalIPs={geoTotalIPs}
-                processedIPs={geoProcessedIPs}
-              />
+              <GeoLocationStats locations={geoLocations} isLoading={geoLoading} totalIPs={geoTotalIPs} />
             </section>
           )}
-          
+
           {stats.platforms.length > 0 && (
             <section>
               <PlatformStats platforms={stats.platforms} />
@@ -783,9 +773,9 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
               <PeakConcurrent peakConcurrentStreams={stats.peakConcurrentStreams} />
             </section>
           )}
-          {adminSettings.showLeaderboard && allUserStats.length > 1 && (
+          {adminSettings.showLeaderboard && leaderboard.length > 1 && (
             <section>
-              <Leaderboard userStats={allUserStats} />
+              <Leaderboard userStats={leaderboard} />
             </section>
           )}
           <motion.footer
@@ -800,7 +790,7 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
             }}
             className="text-center py-12 border-t border-border"
           >
-            {selectedUserId !== null && stats && (
+            {selectedUserId !== null && stats && reportUser && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
@@ -833,11 +823,13 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
             <p className="text-sm text-muted-foreground/50">Powered by Tautulli</p>
           </motion.footer>
         </div>
-      ) : !showWelcomeScreen ? (
+      ) : !showWelcomeScreen && report ? (
         <div className="min-h-screen flex items-center justify-center">
           <div className="text-center stat-card max-w-md mx-4">
             <p className="text-foreground text-lg font-semibold mb-2">No watch history found</p>
-            <p className="text-muted-foreground mb-4">Try adjusting the date range or selecting a different user.</p>
+            <p className="text-muted-foreground mb-4">
+              {canViewAnyone ? "Try adjusting the date range or selecting a different user." : "Try adjusting the date range."}
+            </p>
             <Button onClick={() => setShowControls(true)} variant="outline">
               <Settings className="w-4 h-4 mr-2" />
               Open Settings
@@ -849,13 +841,8 @@ export const WrappedReport = ({ config, onDisconnect }: WrappedReportProps) => {
       <AdminPanel
         isOpen={showAdminPanel}
         onClose={() => {
-          // Reload settings when admin panel closes
-          setAdminSettings(getServerAdminSettings());
           setShowAdminPanel(false);
-        }}
-        users={users}
-        onSettingsChange={(settings) => {
-          setAdminSettings(settings);
+          onRefresh();
         }}
       />
     </div>

@@ -39,13 +39,24 @@ docker-compose up -d
 2. Open the Admin Panel and set your Admin password
 3. Enter your Tautulli `IP:PORT` and API Key (Find this in Tautulli → Settings → Web Interface → API Key)
 
+### Access Modes
+
+Choose how visitors reach their stats in the Admin Panel (`Settings` tab):
+
+- **Regular:** Anyone with the link can pick any user from a dropdown.
+- **Discreet Mode:** Replaces the user dropdown with a username input field. Users need to enter their exact username (NOT 'Friendly name').
+  - **Password Protect Users:** Generates a password for each user (see the `Users` tab). Users need their password to see their stats.
+- **Plex Login:** Visitors sign in with their Plex account. Only accounts with access to your Plex server can sign in, and they only see their own stats. The server owner can view everyone's stats.
+
+**Allow 'All Users' Stats** (Discreet Mode and Plex Login): lets visitors switch between their own stats and everyone's combined stats. In Discreet Mode the "All Users" report also loads when visiting the site.
+
+> [!NOTE]
+> Plex Login identifies your Plex server through Tautulli, so connect Tautulli first. Secrets (Tautulli API key, passwords) are never sent to the browser, and all stats are computed on the server, so visitors can only ever load what their access mode allows.
+
 ### Optional Settings
 
 - **Custom Logo:** Upload your custom logo to be used in reports and export slides. You can adjust the size with the slider.
 - **Custom Title:** Use a custom title instead of "Plex Wrapped".
-- **Discreet Mode:** Replaces the user dropdown with a username input field. Users need to enter their exact username. (NOT 'Friendly name')
-- **Allow 'All Users' in Discreet Mode:** Will auto-load the "All Users" report when visiting the site.
-- **Password Protect Users:** Generates passwords for each user. (See `Users`Tab)
 - **Normalize Tautulli Anomalies:** Fixes duration anomalies found in Tautulli history by capping watch times to actual runtime.
 > [!NOTE]
 > When not closed correctly, sessions in Tautulli can keep 'counting', resulting in sometimes days or weeks worth of 'watch history' for a single session.
@@ -53,13 +64,26 @@ docker-compose up -d
 > To check if you have such anomalies you can check your history tab in Tautulli and sort by duration and look for unrealistically high values:
 > 
 > <img width="1916" height="316" alt="image" src="https://github.com/user-attachments/assets/6fe10045-d270-42f7-8c7a-cd76ac585f4b" />
-- **Streaming Locations:** Will show a world map of where streaming sessions originated from.
+- **Streaming Locations:** Will show a globe of where streaming sessions originated from.
 - **Show Leaderboard:** Will show a user leaderboard in the "All Users" web report.
+- **Default Year:** Reports open on the previous year until this date (December 1st by default), then on the current year. Visitors can always pick another year.
+- **Installable App:** Set the name and icon the app gets when visitors install it (see below).
 
-## Build a Cache
-The app builds and uses a cache file for faster report generation.<br>
-On your first use, it's highly recommended to generate a report for `All Users` for `All Time`. Depending on your history, this can take quite some time.
-Once completed, subsequent reports will generate consciderably faster especially if you enabled `Normalize Tautulli Anomalies`.
+## Install as an App
+Plex Wrapped can be installed on phones, tablets and computers, so it opens from the home screen like a regular app.
+
+- **Android / Chrome / Edge:** use the browser's *Install app* option, or `Settings` → `Install app` in the report.
+- **iPhone / iPad:** tap *Share*, then *Add to Home Screen*.
+- In the Admin Panel (`Settings` tab → `Installable App`) you can set the **App Name** (defaults to the title) and upload an **App Icon**. The icon is resized automatically; a square image of at least 512×512 works best.
+
+> [!NOTE]
+> Browsers only offer to install sites served over HTTPS, so put Plex Wrapped behind a reverse proxy with a certificate (plain `http://` works for `localhost` only). iPhones can always add it to the home screen.
+> Installed apps pick up a new name or icon after a while; on iPhone and iPad, remove the app and add it to the home screen again.
+
+## Stats Cache
+The server keeps a local copy of your Tautulli history, together with item metadata and streaming locations, in the `/data` folder. Reports are computed from this cache, so they load in seconds.
+The first start after connecting Tautulli builds the cache. Caching the metadata of every title you ever watched can take longer on large servers. You can check the progress in the Cache tab.
+Caches are automatically updated nightly.
 
 ## Export Slides
 In the Admin Panel you can export individual user reports.<br>
@@ -70,6 +94,7 @@ In the Admin Panel you can export individual user reports.<br>
 - Users will see an `Export Slides` button at the bottom of the web version of their wrapped report to quickly export their own slides.
 
 <img width="815" height="686" alt="Image" src="https://github.com/user-attachments/assets/cbc9bc2f-7676-41bd-96a9-781eeb9a2f6b" />
+
 
 ### ⚠️ **Do you Need Help or have Feedback?**
 - Join the [Discord](https://discord.gg/VBNUJd7tx3).

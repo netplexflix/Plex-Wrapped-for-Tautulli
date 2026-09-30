@@ -10,7 +10,6 @@ interface GeoLocationStatsProps {
   locations: StreamingLocation[];
   isLoading?: boolean;
   totalIPs?: number;
-  processedIPs?: number;
 }
 
 // Lazy load the map component to avoid SSR issues
@@ -25,20 +24,12 @@ const getFlagEmoji = (countryCode: string): string => {
   return String.fromCodePoint(...codePoints);
 };
 
-export const GeoLocationStats = ({
-  locations,
-  isLoading = false,
-  totalIPs = 0,
-  processedIPs = 0,
-}: GeoLocationStatsProps) => {
+export const GeoLocationStats = ({ locations, isLoading = false, totalIPs = 0 }: GeoLocationStatsProps) => {
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
-
-  const processed = totalIPs > 0 ? Math.min(processedIPs, totalIPs) : 0;
-  const loadingProgress = totalIPs > 0 ? Math.round((processed / totalIPs) * 100) : 0;
 
   const insight = generateLocationInsight(locations);
 
@@ -147,29 +138,11 @@ export const GeoLocationStats = ({
         <div className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none bg-gradient-to-t from-card to-transparent" />
       </div>
 
-      {/* Progress bar below map */}
+      {/* Loading indicator below map */}
       {isLoading && (
-        <div className="mt-3 mb-6">
-          <div className="flex items-center justify-between text-sm text-muted-foreground mb-2">
-            <span className="flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Locating Sessions...
-            </span>
-            <span>
-              {processed} of {totalIPs} ({loadingProgress}%)
-            </span>
-          </div>
-          <div className="h-2 bg-secondary/50 rounded-full overflow-hidden">
-            <motion.div
-              className="h-full bg-gradient-to-r from-cyan to-purple rounded-full"
-              initial={{ width: 0 }}
-              animate={{ width: `${loadingProgress}%` }}
-              transition={{ duration: 0.3, ease: "easeOut" }}
-            />
-          </div>
-          <div className="mt-2 text-xs text-muted-foreground/80 text-center">
-            Located: {locations.length}
-          </div>
+        <div className="mt-3 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Locating sessions...
         </div>
       )}
 
