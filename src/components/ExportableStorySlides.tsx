@@ -1,7 +1,7 @@
 // src/components/ExportableStorySlides.tsx
 
 import { useEffect, useState } from "react";
-import { TautulliConfig, TautulliUser, WrappedStats, StreamingLocation } from "@/types/tautulli";
+import { TautulliUser, WrappedStats, StreamingLocation } from "@/types/tautulli";
 import { YearSelection, getDisplayYear, getYearsCount } from "./YearSelector";
 import { formatHours, getImageUrl } from "@/lib/tautulli";
 import { Clock, Film, Tv, Play, Calendar, Flame, Moon, Star, Trophy, Sparkles, Sunrise, Clapperboard, Globe, MapPin } from "lucide-react";
@@ -12,7 +12,6 @@ interface ExportableStorySlidesProps {
   user: TautulliUser;
   stats: WrappedStats;
   yearSelection: YearSelection;
-  config: TautulliConfig;
   geoLocations?: StreamingLocation[];
   onReady?: () => void;
 }
@@ -48,7 +47,6 @@ export const ExportableStorySlides = ({
   user,
   stats,
   yearSelection,
-  config,
   geoLocations = [],
   onReady,
 }: ExportableStorySlidesProps) => {
@@ -334,7 +332,7 @@ export const ExportableStorySlides = ({
                 {movie.thumb && (
                   <div style={{ width: '50px', height: '75px', borderRadius: '8px', overflow: 'hidden', flexShrink: 0, backgroundColor: colors.cardAlt }}>
                     <img 
-                      src={getImageUrl(config, movie.thumb)} 
+                      src={getImageUrl(movie.thumb)} 
                       alt={movie.title}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       crossOrigin="anonymous"
@@ -386,7 +384,7 @@ export const ExportableStorySlides = ({
                 {show.thumb && (
                   <div style={{ width: '50px', height: '75px', borderRadius: '8px', overflow: 'hidden', flexShrink: 0, backgroundColor: colors.cardAlt }}>
                     <img 
-                      src={getImageUrl(config, show.thumb)} 
+                      src={getImageUrl(show.thumb)} 
                       alt={show.title}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       crossOrigin="anonymous"

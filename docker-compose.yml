@@ -12,4 +12,5 @@ services:
     volumes:
       - ./data:/data
     environment:
+      # Your timezone (e.g. Europe/Amsterdam). Used for the nightly cache sync time.
       - TZ=UTC

@@ -1,22 +1,66 @@
-// Admin panel storage utilities
+// Shared admin settings types (stored server-side in /data/config.json)
 
-const ADMIN_PASSWORD_KEY = 'plex-wrapped-admin-password';
-const ADMIN_SETTINGS_KEY = 'plex-wrapped-admin-settings';
-const USER_PASSWORDS_KEY = 'plex-wrapped-user-passwords';
-const EMAIL_SETTINGS_KEY = 'plex-wrapped-email-settings';
+export type AccessMode = "regular" | "discreet" | "plex";
 
 export interface AdminSettings {
-  discreetMode: boolean;
-  passwordProtectUsers: boolean;
+  accessMode: AccessMode;
+  allowAllUsers: boolean; // Discreet & Plex Login: allow viewing everyone's combined stats
+  passwordProtectUsers: boolean; // Discreet: require a per-user password
   normalizeTautulliAnomalies: boolean;
   useCustomTitle: boolean;
   customTitle: string;
   useCustomLogo: boolean;
   logoMaxHeight: number; // Max height in pixels for the logo
   enableGeolocation: boolean;
-  allowAllUsersInDiscreetMode: boolean; // NEW: Allow "All Users" report in discreet mode
-  showLeaderboard: boolean; // NEW: Show/hide leaderboard section
+  showLeaderboard: boolean;
+  nightlySyncTime: string; // "HH:mm", server timezone
+  appName: string; // Installed app (PWA) name; empty = use the title
+  currentYearFrom: string; // "MM-DD": from this date on, reports open on the current year instead of the previous one
 }
+
+export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
+  accessMode: "regular",
+  allowAllUsers: false,
+  passwordProtectUsers: false,
+  normalizeTautulliAnomalies: false,
+  useCustomTitle: false,
+  customTitle: "Plex Wrapped",
+  useCustomLogo: false,
+  logoMaxHeight: 80,
+  enableGeolocation: false,
+  showLeaderboard: true,
+  nightlySyncTime: "03:00",
+  appName: "",
+  currentYearFrom: "12-01",
+};
+
+// February allows the 29th; in other years that date simply means March 1st
+export const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/** Parses a "MM-DD" setting (1-based month); null if it isn't a real date */
+export const parseMonthDay = (value: unknown): { month: number; day: number } | null => {
+  if (typeof value !== "string" || !/^\d{2}-\d{2}$/.test(value)) return null;
+  const [month, day] = value.split("-").map(Number);
+  return month >= 1 && month <= 12 && day >= 1 && day <= DAYS_IN_MONTH[month - 1] ? { month, day } : null;
+};
+
+export const formatMonthDay = (month: number, day: number) => `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+/** The year reports open on for a date (0-based month): the previous year until `currentYearFrom`, then the current one */
+export const defaultReportYear = (year: number, month0: number, day: number, currentYearFrom: string) => {
+  const from = parseMonthDay(currentYearFrom) ?? parseMonthDay(DEFAULT_ADMIN_SETTINGS.currentYearFrom)!;
+  const month = month0 + 1;
+  const reached = month > from.month || (month === from.month && day >= from.day);
+  return reached ? year : year - 1;
+};
+
+/** The report title: the custom title when enabled, otherwise "Plex Wrapped" */
+export const getDisplayTitle = (settings: Pick<AdminSettings, "useCustomTitle" | "customTitle">) =>
+  (settings.useCustomTitle && settings.customTitle.trim()) || "Plex Wrapped";
+
+/** Name of the installed app (home screen, window title); falls back to the report title */
+export const getAppName = (settings: Pick<AdminSettings, "appName" | "useCustomTitle" | "customTitle">) =>
+  settings.appName.trim() || getDisplayTitle(settings);
 
 export interface EmailSettings {
   appUrl: string;
@@ -31,203 +75,3 @@ export interface UserPassword {
   email?: string;
   password: string;
 }
-
-export const DEFAULT_EMAIL_TEMPLATE = `Hi {{friendlyName}},
-
-Your Plex Wrapped for {{serverName}} is ready!
-
-Visit {{appUrl}} to see your personalized viewing statistics.
-
-Your login details:
-Username: {{username}}
-Password: {{password}}
-
-Enjoy reliving your year in entertainment!
-
-Best regards,
-The {{serverName}} Team`;
-
-// Simple hash function for password storage (not cryptographically secure, but suitable for local app)
-const simpleHash = (str: string): string => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return hash.toString(36);
-};
-
-// Generate a random password
-export const generatePassword = (): string => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let password = '';
-  for (let i = 0; i < 8; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
-};
-
-// Admin password functions
-export const isAdminPasswordSet = (): boolean => {
-  return localStorage.getItem(ADMIN_PASSWORD_KEY) !== null;
-};
-
-export const setAdminPassword = (password: string): void => {
-  localStorage.setItem(ADMIN_PASSWORD_KEY, simpleHash(password));
-};
-
-export const verifyAdminPassword = (password: string): boolean => {
-  const stored = localStorage.getItem(ADMIN_PASSWORD_KEY);
-  if (!stored) return false;
-  return simpleHash(password) === stored;
-};
-
-export const resetAdminPassword = (): void => {
-  localStorage.removeItem(ADMIN_PASSWORD_KEY);
-};
-
-// Admin settings functions
-export const getAdminSettings = (): AdminSettings => {
-  const stored = localStorage.getItem(ADMIN_SETTINGS_KEY);
-  if (!stored) {
-    return {
-      discreetMode: false,
-      passwordProtectUsers: false,
-      normalizeTautulliAnomalies: false,
-      useCustomTitle: false,
-      customTitle: 'Plex Wrapped',
-      useCustomLogo: false,
-      logoMaxHeight: 80,
-      enableGeolocation: false,
-      allowAllUsersInDiscreetMode: false,
-      showLeaderboard: true,
-    };
-  }
-  try {
-    const parsed = JSON.parse(stored);
-    return {
-      discreetMode: parsed.discreetMode || false,
-      passwordProtectUsers: parsed.passwordProtectUsers || false,
-      normalizeTautulliAnomalies: parsed.normalizeTautulliAnomalies || false,
-      useCustomTitle: parsed.useCustomTitle || false,
-      customTitle: parsed.customTitle || 'Plex Wrapped',
-      useCustomLogo: parsed.useCustomLogo || false,
-      logoMaxHeight: parsed.logoMaxHeight || 80,
-      enableGeolocation: parsed.enableGeolocation || false,
-      allowAllUsersInDiscreetMode: parsed.allowAllUsersInDiscreetMode || false,
-      showLeaderboard: parsed.showLeaderboard !== false, // Default to true
-    };
-  } catch {
-    return {
-      discreetMode: false,
-      passwordProtectUsers: false,
-      normalizeTautulliAnomalies: false,
-      useCustomTitle: false,
-      customTitle: 'Plex Wrapped',
-      useCustomLogo: false,
-      logoMaxHeight: 80,
-      enableGeolocation: false,
-      allowAllUsersInDiscreetMode: false,
-      showLeaderboard: true,
-    };
-  }
-};
-
-export const saveAdminSettings = (settings: AdminSettings): void => {
-  localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(settings));
-};
-
-// User password functions
-export const getUserPasswords = (): UserPassword[] => {
-  const stored = localStorage.getItem(USER_PASSWORDS_KEY);
-  if (!stored) return [];
-  try {
-    return JSON.parse(stored);
-  } catch {
-    return [];
-  }
-};
-
-export const saveUserPasswords = (passwords: UserPassword[]): void => {
-  localStorage.setItem(USER_PASSWORDS_KEY, JSON.stringify(passwords));
-};
-
-export const getUserPassword = (userId: number): string | null => {
-  const passwords = getUserPasswords();
-  const user = passwords.find(p => p.userId === userId);
-  return user?.password || null;
-};
-
-export const setUserPassword = (userId: number, username: string, friendlyName: string, password: string, email?: string): void => {
-  const passwords = getUserPasswords();
-  const existingIndex = passwords.findIndex(p => p.userId === userId);
-  
-  if (existingIndex >= 0) {
-    passwords[existingIndex] = { userId, username, friendlyName, password, email };
-  } else {
-    passwords.push({ userId, username, friendlyName, password, email });
-  }
-  
-  saveUserPasswords(passwords);
-};
-
-export const verifyUserPassword = (userId: number, password: string): boolean => {
-  const storedPassword = getUserPassword(userId);
-  return storedPassword === password;
-};
-
-export const generatePasswordsForAllUsers = (users: { userId: number; username: string; friendlyName: string; email?: string }[]): void => {
-  const existingPasswords = getUserPasswords();
-  
-  users.forEach(user => {
-    const existing = existingPasswords.find(p => p.userId === user.userId);
-    if (!existing) {
-      setUserPassword(user.userId, user.username, user.friendlyName, generatePassword(), user.email);
-    }
-  });
-};
-
-// Email settings functions
-export const getEmailSettings = (): EmailSettings => {
-  const stored = localStorage.getItem(EMAIL_SETTINGS_KEY);
-  if (!stored) {
-    return {
-      appUrl: window.location.origin,
-      serverName: 'Plex Server',
-      emailTemplate: DEFAULT_EMAIL_TEMPLATE,
-    };
-  }
-  try {
-    return JSON.parse(stored);
-  } catch {
-    return {
-      appUrl: window.location.origin,
-      serverName: 'Plex Server',
-      emailTemplate: DEFAULT_EMAIL_TEMPLATE,
-    };
-  }
-};
-
-export const saveEmailSettings = (settings: EmailSettings): void => {
-  localStorage.setItem(EMAIL_SETTINGS_KEY, JSON.stringify(settings));
-};
-
-export const updateUserEmail = (userId: number, email: string): void => {
-  const passwords = getUserPasswords();
-  const existingIndex = passwords.findIndex(p => p.userId === userId);
-  
-  if (existingIndex >= 0) {
-    passwords[existingIndex].email = email;
-    saveUserPasswords(passwords);
-  }
-};
-
-export const getEmailForUser = (userId: number, username: string, friendlyName: string, password: string, emailSettings: EmailSettings): string => {
-  return emailSettings.emailTemplate
-    .replace(/\{\{friendlyName\}\}/g, friendlyName)
-    .replace(/\{\{username\}\}/g, username)
-    .replace(/\{\{password\}\}/g, password)
-    .replace(/\{\{appUrl\}\}/g, emailSettings.appUrl)
-    .replace(/\{\{serverName\}\}/g, emailSettings.serverName);
-};

@@ -1,7 +1,7 @@
 // src/components/ExportableWrappedReport.tsx
 
 import { useEffect } from "react";
-import { TautulliConfig, TautulliUser, WrappedStats, StreamingLocation } from "@/types/tautulli";
+import { TautulliUser, WrappedStats, StreamingLocation } from "@/types/tautulli";
 import { YearSelection, getDisplayYear, getYearsCount } from "./YearSelector";
 import { formatHours } from "@/lib/tautulli";
 import { Clock, Film, Tv, Play, Calendar, Flame, Moon, Star, Clapperboard, Users, Smartphone, Trophy, Sparkles, CalendarDays, Sunrise, Globe, MapPin } from "lucide-react";
@@ -40,7 +40,6 @@ interface ExportableWrappedReportProps {
   user: TautulliUser;
   stats: WrappedStats;
   yearSelection: YearSelection;
-  config: TautulliConfig;
   geoLocations?: StreamingLocation[];
   onReady?: () => void;
 }

@@ -8,6 +8,11 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    // In development, run the API with `npm run dev:server`
+    proxy: {
+      "/api": "http://localhost:2025",
+      "/manifest.webmanifest": "http://localhost:2025",
+    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

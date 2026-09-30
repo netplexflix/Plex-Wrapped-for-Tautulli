@@ -1,90 +1,68 @@
-import { useState, useEffect } from "react";
-import { User, Lock, ArrowRight } from "lucide-react";
+import { useState } from "react";
+import { User, Lock, ArrowRight, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { TautulliUser } from "@/types/tautulli";
-import { verifyServerUserPassword, initializeConfig } from "@/lib/serverConfig";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 
 interface UsernameInputProps {
-  users: TautulliUser[];
-  onSelectUser: (userId: number | null) => void;
-  passwordProtectionEnabled: boolean;
+  onSelectUser: (userId: number) => void;
 }
 
-export const UsernameInput = ({ users, onSelectUser, passwordProtectionEnabled }: UsernameInputProps) => {
+// Discreet mode: users type their exact username (and password, if enabled).
+// Both are checked by the server; the user list never reaches the browser.
+export const UsernameInput = ({ onSelectUser }: UsernameInputProps) => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [showPasswordField, setShowPasswordField] = useState(false);
-  const [matchedUser, setMatchedUser] = useState<TautulliUser | null>(null);
-  const [configLoaded, setConfigLoaded] = useState(false);
+  const [matchedUser, setMatchedUser] = useState<{ userId: number; friendlyName: string } | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  // Initialize config when component mounts to ensure password data is loaded
-  useEffect(() => {
-    initializeConfig().then(() => {
-      setConfigLoaded(true);
-    });
-  }, []);
-
-  const handleUsernameSubmit = () => {
+  const handleUsernameSubmit = async () => {
     if (!username.trim()) {
       toast.error("Please enter a username");
       return;
     }
 
     // Prevent "user" as username in discreet mode
-    if (username.toLowerCase() === "user") {
+    if (username.trim().toLowerCase() === "user") {
       toast.error("Invalid username. Please enter a specific user.");
       return;
     }
 
-    // Find user by username only (not friendly name)
-    const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-
-    if (!user) {
-      toast.error("User not found");
-      return;
-    }
-
-    if (passwordProtectionEnabled) {
-      setMatchedUser(user);
-      setShowPasswordField(true);
-    } else {
-      onSelectUser(user.user_id);
+    setBusy(true);
+    try {
+      const user = await api.lookupUser(username.trim());
+      if (user.needsPassword) {
+        setMatchedUser(user);
+      } else {
+        onSelectUser(user.userId);
+        setUsername("");
+      }
+    } catch (error) {
+      toast.error(error instanceof ApiError && error.status === 404 ? "User not found" : (error as Error).message);
+    } finally {
+      setBusy(false);
     }
   };
 
   const handlePasswordSubmit = async () => {
     if (!matchedUser) return;
-
-    if (!configLoaded) {
-      toast.error("Configuration still loading, please wait...");
-      return;
-    }
-
-    // Ensure config is fresh before verifying
-    await initializeConfig();
-
-    if (verifyServerUserPassword(matchedUser.user_id, password)) {
-      onSelectUser(matchedUser.user_id);
-      setShowPasswordField(false);
-      setPassword("");
-      setUsername("");
-      setMatchedUser(null);
-    } else {
-      toast.error("Incorrect password");
-      // Reset everything on wrong password
-      setPassword("");
-      setShowPasswordField(false);
-      setMatchedUser(null);
-      setUsername("");
+    setBusy(true);
+    try {
+      await api.passwordLogin(matchedUser.userId, password);
+      onSelectUser(matchedUser.userId);
+      handleClear();
+    } catch (error) {
+      toast.error(error instanceof ApiError && error.status === 401 ? "Incorrect password" : (error as Error).message);
+      handleClear();
+    } finally {
+      setBusy(false);
     }
   };
 
   const handleClear = () => {
     setUsername("");
     setPassword("");
-    setShowPasswordField(false);
     setMatchedUser(null);
   };
 
@@ -99,17 +77,17 @@ export const UsernameInput = ({ users, onSelectUser, passwordProtectionEnabled }
             placeholder="Enter username"
             className="bg-card border-border"
             onKeyDown={(e) => e.key === "Enter" && handleUsernameSubmit()}
-            disabled={showPasswordField}
+            disabled={Boolean(matchedUser) || busy}
           />
-          {!showPasswordField && (
-            <Button size="icon" onClick={handleUsernameSubmit}>
-              <ArrowRight className="w-4 h-4" />
+          {!matchedUser && (
+            <Button size="icon" onClick={handleUsernameSubmit} disabled={busy}>
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
             </Button>
           )}
         </div>
       </div>
 
-      {showPasswordField && matchedUser && (
+      {matchedUser && (
         <div className="flex items-center gap-3">
           <Lock className="w-5 h-5 text-primary" />
           <div className="flex items-center gap-2 flex-1">
@@ -117,13 +95,13 @@ export const UsernameInput = ({ users, onSelectUser, passwordProtectionEnabled }
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={`Password for ${matchedUser.friendly_name || matchedUser.username}`}
+              placeholder={`Password for ${matchedUser.friendlyName}`}
               className="bg-card border-border"
               onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
               autoFocus
             />
-            <Button size="icon" onClick={handlePasswordSubmit} disabled={!configLoaded}>
-              <ArrowRight className="w-4 h-4" />
+            <Button size="icon" onClick={handlePasswordSubmit} disabled={busy}>
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
             </Button>
             <Button size="icon" variant="outline" onClick={handleClear}>
               ×

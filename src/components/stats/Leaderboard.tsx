@@ -2,10 +2,10 @@ import { motion } from "framer-motion";
 import { Trophy, Medal, Award } from "lucide-react";
 import { StatCard } from "./StatCard";
 import { formatDuration, formatHours } from "@/lib/tautulli";
-import { UserStats } from "@/types/tautulli";
+import type { LeaderboardEntry } from "@/types/api";
 
 interface LeaderboardProps {
-  userStats: UserStats[];
+  userStats: LeaderboardEntry[];
 }
 
 export const Leaderboard = ({ userStats }: LeaderboardProps) => {

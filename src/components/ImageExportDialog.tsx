@@ -1,6 +1,6 @@
 // src/components/ImageExportDialog.tsx
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Image, Loader2, Check, Calendar, ImageIcon, LayoutGrid, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,12 +16,10 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { TautulliConfig, TautulliUser, WrappedStats, StreamingLocation } from "@/types/tautulli";
-import { getHistory, calculateWrappedStats, fetchMetadataStats, getOldestHistoryYear } from "@/lib/tautulli";
-import { extractUniqueIPs, geolocateIPs } from "@/lib/geolocation";
-import { YearSelector, YearSelection, getDateRangeFromSelection, getDisplayYear, getDefaultYear } from "./YearSelector";
+import { TautulliUser, WrappedStats, StreamingLocation } from "@/types/tautulli";
+import { YearSelector, YearSelection, getDisplayYear, getDefaultYear, toPeriod } from "./YearSelector";
 import { getServerAdminSettings } from "@/lib/serverConfig";
-import { format } from "date-fns";
+import { api, isBuilding } from "@/lib/api";
 import html2canvas from "html2canvas";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
@@ -33,7 +31,7 @@ interface ImageExportDialogProps {
   isOpen: boolean;
   onClose: () => void;
   users: TautulliUser[];
-  config: TautulliConfig;
+  oldestYear?: number;
 }
 
 type ExportMode = 'single' | 'slides' | 'both';
@@ -45,7 +43,7 @@ export const ImageExportDialog = ({
   isOpen,
   onClose,
   users,
-  config,
+  oldestYear,
 }: ImageExportDialogProps) => {
   const [selectedUserIds, setSelectedUserIds] = useState<Set<number>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
@@ -55,22 +53,13 @@ export const ImageExportDialog = ({
   const [exportMode, setExportMode] = useState<ExportMode>('single');
   const [yearSelection, setYearSelection] = useState<YearSelection>({
     type: 'year',
-    year: getDefaultYear()
+    year: getDefaultYear(getServerAdminSettings().currentYearFrom)
   });
-  const [oldestYear, setOldestYear] = useState<number | undefined>(undefined);
   const [renderData, setRenderData] = useState<{ user: TautulliUser; stats: WrappedStats; geoLocations: StreamingLocation[] } | null>(null);
   const [renderMode, setRenderMode] = useState<'full' | 'slides'>('full');
   const renderContainerRef = useRef<HTMLDivElement>(null);
   const slidesContainerRef = useRef<HTMLDivElement>(null);
   const isRenderReadyRef = useRef(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      getOldestHistoryYear(config).then(oldest => {
-        if (oldest) setOldestYear(oldest);
-      });
-    }
-  }, [isOpen, config]);
 
   const toggleUser = (userId: number) => {
     const newSelected = new Set(selectedUserIds);
@@ -246,15 +235,27 @@ export const ImageExportDialog = ({
     setProgress(0);
 
     const zip = new JSZip();
-    const { startDate, endDate } = getDateRangeFromSelection(yearSelection);
-    const startStr = format(startDate, "yyyy-MM-dd");
-    const endStr = format(endDate, "yyyy-MM-dd");
+    const period = toPeriod(yearSelection);
     const displayYear = getDisplayYear(yearSelection);
 
     // Get admin settings
     const adminSettings = getServerAdminSettings();
-    const normalizeAnomalies = adminSettings.normalizeTautulliAnomalies || false;
     const enableGeolocation = adminSettings.enableGeolocation || false;
+
+    // Stats are computed server-side; exports run with the admin session
+    const fetchReportData = async (user: number | "all") => {
+      const report = await api.report({ user, period });
+      let geoLocations: StreamingLocation[] = [];
+      if (enableGeolocation) {
+        setCurrentPhase("Locating streaming sessions...");
+        try {
+          geoLocations = (await api.reportLocations({ user, period })).locations;
+        } catch (e) {
+          console.warn("Failed to fetch geolocation:", e);
+        }
+      }
+      return { stats: report.stats, geoLocations };
+    };
 
     // Separate "All Users" from individual users
     const hasAllUsers = selectedUserIds.has(ALL_USERS_ID);
@@ -271,44 +272,13 @@ export const ImageExportDialog = ({
         setCurrentUser("All Users");
         setCurrentPhase("Fetching watch history...");
 
-        // Fetch all history without user filter
-        const history = await getHistory(config, undefined, startStr, endStr, 5000, normalizeAnomalies);
-        let stats = calculateWrappedStats(history);
-        
-        setCurrentPhase("Loading metadata...");
-        try {
-          const metaStats = await fetchMetadataStats(config, history);
-          stats = { ...stats, ...metaStats };
-        } catch (e) {
-          console.warn("Failed to fetch metadata:", e);
-        }
-
-        // Fetch geolocation data if enabled
-        let geoLocations: StreamingLocation[] = [];
-        if (enableGeolocation) {
-          setCurrentPhase("Locating streaming sessions...");
-          try {
-            const ipData = extractUniqueIPs(history);
-            if (ipData.size > 0) {
-              geoLocations = await geolocateIPs(ipData);
-              console.log(`[ImageExport] Found ${geoLocations.length} locations for All Users`);
-            }
-          } catch (e) {
-            console.warn("Failed to fetch geolocation:", e);
-          }
-        }
+        const { stats, geoLocations } = await fetchReportData("all");
 
         // Create a pseudo-user for "All Users"
         const allUsersUser: TautulliUser = {
           user_id: ALL_USERS_ID,
           username: "all_users",
           friendly_name: "All Users",
-          email: "",
-          is_active: 1,
-          is_admin: 0,
-          is_home_user: 0,
-          is_allow_sync: 0,
-          is_restricted: 0,
           thumb: "",
         };
 
@@ -385,32 +355,7 @@ export const ImageExportDialog = ({
         setCurrentUser(userName);
         setCurrentPhase("Fetching watch history...");
 
-        // Pass normalizeAnomalies to getHistory
-        const history = await getHistory(config, user.user_id, startStr, endStr, 5000, normalizeAnomalies);
-        let stats = calculateWrappedStats(history);
-        
-        setCurrentPhase("Loading metadata...");
-        try {
-          const metaStats = await fetchMetadataStats(config, history);
-          stats = { ...stats, ...metaStats };
-        } catch (e) {
-          console.warn("Failed to fetch metadata:", e);
-        }
-
-        // Fetch geolocation data if enabled
-        let geoLocations: StreamingLocation[] = [];
-        if (enableGeolocation) {
-          setCurrentPhase("Locating streaming sessions...");
-          try {
-            const ipData = extractUniqueIPs(history);
-            if (ipData.size > 0) {
-              geoLocations = await geolocateIPs(ipData);
-              console.log(`[ImageExport] Found ${geoLocations.length} locations for ${userName}`);
-            }
-          } catch (e) {
-            console.warn("Failed to fetch geolocation:", e);
-          }
-        }
+        const { stats, geoLocations } = await fetchReportData(user.user_id);
 
         // Capture full image
         if (exportMode === 'single' || exportMode === 'both') {
@@ -506,7 +451,11 @@ export const ImageExportDialog = ({
       onClose();
     } catch (error) {
       console.error("Export error:", error);
-      toast.error("Failed to export images. Please try again.");
+      toast.error(
+        isBuilding(error)
+          ? "The stats cache is still being built. Please try again in a few minutes."
+          : "Failed to export images. Please try again."
+      );
     } finally {
       setIsExporting(false);
       setProgress(0);
@@ -698,7 +647,6 @@ export const ImageExportDialog = ({
               user={renderData.user}
               stats={renderData.stats}
               yearSelection={yearSelection}
-              config={config}
               geoLocations={renderData.geoLocations}
               onReady={handleRenderReady}
             />
@@ -713,7 +661,6 @@ export const ImageExportDialog = ({
               user={renderData.user}
               stats={renderData.stats}
               yearSelection={yearSelection}
-              config={config}
               geoLocations={renderData.geoLocations}
               onReady={handleRenderReady}
             />

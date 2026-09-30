@@ -6,6 +6,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { defaultReportYear } from "@/lib/adminStorage";
 
 export type YearSelection = 
   | { type: 'year'; year: number }
@@ -28,12 +29,11 @@ const getAvailableYears = (oldestYear?: number): number[] => {
   return years;
 };
 
-// Get the default year: previous year unless it's December, then current year
-export const getDefaultYear = (): number => {
+// The year reports open on: the previous year until the admin's "current year from" date
+// (Admin Panel, default December 1st), then the current year. Uses the visitor's local date.
+export const getDefaultYear = (currentYearFrom: string): number => {
   const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth(); // 0-indexed, 11 = December
-  return currentMonth === 11 ? currentYear : currentYear - 1;
+  return defaultReportYear(now.getFullYear(), now.getMonth(), now.getDate(), currentYearFrom);
 };
 
 // Calculate number of years for "all time" display
@@ -104,6 +104,9 @@ export const getDateRangeFromSelection = (selection: YearSelection): { startDate
     return { startDate, endDate };
   }
 };
+
+// The report period sent to the server: "2025", "rolling" or "alltime"
+export const toPeriod = (selection: YearSelection): string => (selection.type === "year" ? String(selection.year) : selection.type);
 
 export const getDisplayYear = (selection: YearSelection): string => {
   if (selection.type === 'alltime') {

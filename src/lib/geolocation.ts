@@ -1,116 +1,11 @@
 // src/lib/geolocation.ts
+// Pure geolocation helpers shared by the server (IP extraction) and the web app (map/insights).
+// IP lookups themselves happen server-side (server/geo.ts).
 
 import { WatchHistory, StreamingLocation } from "@/types/tautulli";
 
-interface IpApiResponse {
-  status: string;
-  country: string;
-  countryCode: string;
-  region: string;
-  regionName: string;
-  city: string;
-  lat: number;
-  lon: number;
-  query: string;
-}
-
-interface GeolocationCacheEntry {
-  city: string;
-  region: string;
-  country: string;
-  countryCode: string;
-  lat: number;
-  lon: number;
-  cachedAt: number;
-}
-
-interface GeolocationCache {
-  version: number;
-  locations: Record<string, GeolocationCacheEntry>;
-  lastUpdated?: number;
-}
-
-// In-memory cache
-let memoryCache: GeolocationCache | null = null;
-let pendingCacheUpdates: Record<string, GeolocationCacheEntry> = {};
-let cacheFlushTimeout: ReturnType<typeof setTimeout> | null = null;
-
-// Load geolocation cache from server
-const loadGeolocationCache = async (): Promise<GeolocationCache> => {
-  if (memoryCache) {
-    return memoryCache;
-  }
-
-  try {
-    const response = await fetch('/api/cache/geolocation');
-    if (response.ok) {
-      memoryCache = await response.json();
-      console.log(`[GeoCache] Loaded ${Object.keys(memoryCache?.locations || {}).length} cached IP locations`);
-      return memoryCache!;
-    }
-  } catch (error) {
-    console.error('[GeoCache] Failed to load geolocation cache:', error);
-  }
-
-  memoryCache = { version: 1, locations: {} };
-  return memoryCache;
-};
-
-// Save pending cache updates to server (debounced)
-const flushCacheUpdates = async (): Promise<void> => {
-  if (Object.keys(pendingCacheUpdates).length === 0) {
-    return;
-  }
-
-  const updates = { ...pendingCacheUpdates };
-  pendingCacheUpdates = {};
-
-  try {
-    const response = await fetch('/api/cache/geolocation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ locations: updates })
-    });
-
-    if (response.ok) {
-      const result = await response.json();
-      console.log(`[GeoCache] Saved ${Object.keys(updates).length} new entries (total: ${result.totalEntries})`);
-    }
-  } catch (error) {
-    console.error('[GeoCache] Failed to save cache updates:', error);
-    // Put the updates back for retry
-    pendingCacheUpdates = { ...updates, ...pendingCacheUpdates };
-  }
-};
-
-// Schedule a cache flush (debounced)
-const scheduleCacheFlush = (): void => {
-  if (cacheFlushTimeout) {
-    clearTimeout(cacheFlushTimeout);
-  }
-  cacheFlushTimeout = setTimeout(() => {
-    flushCacheUpdates();
-    cacheFlushTimeout = null;
-  }, 2000);
-};
-
-// Add entry to cache
-const addToCacheEntry = (ip: string, entry: GeolocationCacheEntry): void => {
-  if (memoryCache) {
-    memoryCache.locations[ip] = entry;
-  }
-  pendingCacheUpdates[ip] = entry;
-  scheduleCacheFlush();
-};
-
-// Get entry from cache
-const getFromCache = (ip: string): GeolocationCacheEntry | null => {
-  if (!memoryCache) return null;
-  return memoryCache.locations[ip] || null;
-};
-
 // Normalize IP address
-const normalizeIp = (raw: string): string => {
+export const normalizeIp = (raw: string): string => {
   let ip = raw.split(",")[0].trim();
   if (!ip) return "";
 
@@ -131,7 +26,7 @@ const normalizeIp = (raw: string): string => {
 };
 
 // Check if IP is public
-const isPublicIp = (ip: string): boolean => {
+export const isPublicIp = (ip: string): boolean => {
   const ipv4 = ip.match(/^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$/);
   if (ipv4) {
     const a = Number(ipv4[1]);
@@ -160,11 +55,16 @@ const isPublicIp = (ip: string): boolean => {
   return looksLikeIpv6;
 };
 
-// Extract unique IPs with their session counts, user info, and dates from watch history
+export type IpSessionData = Map<string, { count: number; users: Set<string>; dates: string[] }>;
+
+// Extract unique IPs with their session counts, user info, and dates from watch history.
+// Session labels are "<date> — <user>" when includeNames is set, otherwise just "<date>".
 export const extractUniqueIPs = (
-  history: WatchHistory[]
-): Map<string, { count: number; users: Set<string>; dates: string[] }> => {
-  const ipData = new Map<string, { count: number; users: Set<string>; dates: string[] }>();
+  history: WatchHistory[],
+  options: { timeZone?: string; includeNames?: boolean } = {}
+): IpSessionData => {
+  const { timeZone, includeNames = true } = options;
+  const ipData: IpSessionData = new Map();
 
   const formatSessionDate = (timestamp: number): string => {
     const epochSeconds = timestamp > 10_000_000_000 ? Math.floor(timestamp / 1000) : timestamp;
@@ -173,6 +73,7 @@ export const extractUniqueIPs = (
       month: "short",
       day: "numeric",
       year: "numeric",
+      timeZone,
     });
   };
 
@@ -183,7 +84,8 @@ export const extractUniqueIPs = (
 
     const existing = ipData.get(ip);
     const userName = h.friendly_name || h.user || "Unknown";
-    const sessionLabel = `${formatSessionDate(h.started || h.date)} — ${userName}`;
+    const date = formatSessionDate(h.started || h.date);
+    const sessionLabel = includeNames ? `${date} — ${userName}` : date;
 
     if (existing) {
       existing.count += 1;
@@ -195,273 +97,6 @@ export const extractUniqueIPs = (
   });
 
   return ipData;
-};
-
-// Progress payload for progressive loading
-export type GeoLocationProgress = {
-  locations: StreamingLocation[];
-  processed: number;
-  total: number;
-  done: boolean;
-};
-
-export type GeoLocationProgressCallback = (progress: GeoLocationProgress) => void;
-
-// Geolocate IPs with caching support
-export const geolocateIPs = async (
-  ipData: Map<string, { count: number; users: Set<string>; dates: string[] }>,
-  onProgress?: GeoLocationProgressCallback
-): Promise<StreamingLocation[]> => {
-  const ips = Array.from(ipData.keys());
-  const total = ips.length;
-
-  const locations: StreamingLocation[] = [];
-
-  const report = (processed: number, done: boolean) => {
-    onProgress?.({ locations: [...locations], processed, total, done });
-  };
-
-  if (total === 0) {
-    report(0, true);
-    return [];
-  }
-
-  // Load cache first
-  await loadGeolocationCache();
-
-  // Separate cached and uncached IPs
-  const cachedIps: string[] = [];
-  const uncachedIps: string[] = [];
-
-  ips.forEach(ip => {
-    const cached = getFromCache(ip);
-    if (cached) {
-      cachedIps.push(ip);
-    } else {
-      uncachedIps.push(ip);
-    }
-  });
-
-  console.log(`[Geolocation] ${cachedIps.length} IPs found in cache, ${uncachedIps.length} need lookup`);
-
-  // Add cached locations immediately
-  cachedIps.forEach(ip => {
-    const cached = getFromCache(ip)!;
-    const data = ipData.get(ip);
-    locations.push({
-      ip,
-      city: cached.city,
-      region: cached.region,
-      country: cached.country,
-      countryCode: cached.countryCode,
-      lat: cached.lat,
-      lon: cached.lon,
-      sessionCount: data?.count || 1,
-      sessionDates: data?.dates || [],
-    });
-  });
-
-  // Report initial progress with cached data
-  report(cachedIps.length, uncachedIps.length === 0);
-
-  if (uncachedIps.length === 0) {
-    return locations;
-  }
-
-  // Lookup uncached IPs
-  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
-
-  // Helper to build location from API response
-  const buildLocationFromResponse = (
-    ip: string,
-    fields: {
-      city?: string;
-      region?: string;
-      country?: string;
-      countryCode?: string;
-      lat: number | null;
-      lon: number | null;
-    }
-  ): StreamingLocation | null => {
-    if (fields.lat == null || fields.lon == null) return null;
-
-    const data = ipData.get(ip);
-    
-    // Cache the result
-    addToCacheEntry(ip, {
-      city: fields.city || "Unknown",
-      region: fields.region || "",
-      country: fields.country || "Unknown",
-      countryCode: fields.countryCode || "",
-      lat: fields.lat,
-      lon: fields.lon,
-      cachedAt: Date.now(),
-    });
-
-    return {
-      ip,
-      city: fields.city || "Unknown",
-      region: fields.region || "",
-      country: fields.country || "Unknown",
-      countryCode: fields.countryCode || "",
-      lat: fields.lat,
-      lon: fields.lon,
-      sessionCount: data?.count || 1,
-      sessionDates: data?.dates || [],
-    };
-  };
-
-  // Try batch API first (HTTP only)
-  if (!isHttps && uncachedIps.length > 0) {
-    const batchSize = 100;
-
-    for (let i = 0; i < uncachedIps.length; i += batchSize) {
-      const batch = uncachedIps.slice(i, i + batchSize);
-
-      try {
-        const response = await fetch(
-          "http://ip-api.com/batch?fields=status,country,countryCode,region,regionName,city,lat,lon,query",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(batch),
-          }
-        );
-
-        if (response.ok) {
-          const results: IpApiResponse[] = await response.json();
-
-          results.forEach((result) => {
-            if (result.status === "success") {
-              const loc = buildLocationFromResponse(result.query, {
-                city: result.city,
-                region: result.regionName || result.region,
-                country: result.country,
-                countryCode: result.countryCode,
-                lat: result.lat,
-                lon: result.lon,
-              });
-              if (loc) locations.push(loc);
-            }
-          });
-        }
-      } catch (error) {
-        console.warn("[Geolocation] Batch request failed:", error);
-      }
-
-      const processed = cachedIps.length + Math.min(i + batch.length, uncachedIps.length);
-      report(processed, processed >= total);
-
-      if (i + batchSize < uncachedIps.length) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-  }
-
-  // If batch didn't work (HTTPS or failed), use individual providers
-  const remainingIps = uncachedIps.filter(ip => !locations.some(l => l.ip === ip));
-
-  if (remainingIps.length > 0) {
-    type IpWhoIsResponse = {
-      success: boolean;
-      city?: string;
-      region?: string;
-      country?: string;
-      country_code?: string;
-      latitude?: number;
-      longitude?: number;
-      message?: string;
-    };
-
-    type IpApiCoResponse = {
-      city?: string;
-      region?: string;
-      country_name?: string;
-      country_code?: string;
-      latitude?: number | string;
-      longitude?: number | string;
-      error?: boolean;
-      reason?: string;
-    };
-
-    const toNumber = (v: unknown): number | null => {
-      const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
-      return Number.isFinite(n) ? n : null;
-    };
-
-    const geolocateOne = async (ip: string): Promise<StreamingLocation | null> => {
-      // Provider 1: ipwho.is
-      try {
-        const r1 = await fetch(`https://ipwho.is/${ip}`, { cache: "no-store" });
-        if (r1.ok) {
-          const d1: IpWhoIsResponse = await r1.json();
-          if (d1?.success) {
-            return buildLocationFromResponse(ip, {
-              city: d1.city,
-              region: d1.region,
-              country: d1.country,
-              countryCode: d1.country_code,
-              lat: toNumber(d1.latitude),
-              lon: toNumber(d1.longitude),
-            });
-          }
-        }
-      } catch (error) {
-        console.warn(`[Geolocation] ipwho.is failed for ${ip}:`, error);
-      }
-
-      // Provider 2: ipapi.co
-      try {
-        const r2 = await fetch(`https://ipapi.co/${ip}/json/`, { cache: "no-store" });
-        if (r2.ok) {
-          const d2: IpApiCoResponse = await r2.json();
-          if (!d2?.error) {
-            return buildLocationFromResponse(ip, {
-              city: d2.city,
-              region: d2.region,
-              country: d2.country_name,
-              countryCode: d2.country_code,
-              lat: toNumber(d2.latitude),
-              lon: toNumber(d2.longitude),
-            });
-          }
-        }
-      } catch (error) {
-        console.warn(`[Geolocation] ipapi.co failed for ${ip}:`, error);
-      }
-
-      return null;
-    };
-
-    const chunkSize = 3;
-    let processedCount = cachedIps.length + (uncachedIps.length - remainingIps.length);
-
-    for (let chunkStart = 0; chunkStart < remainingIps.length; chunkStart += chunkSize) {
-      const chunk = remainingIps.slice(chunkStart, chunkStart + chunkSize);
-
-      const promises = chunk.map(async (ip, index) => {
-        await new Promise((resolve) => setTimeout(resolve, index * 250));
-        return geolocateOne(ip);
-      });
-
-      const results = await Promise.all(promises);
-      results.forEach((loc) => {
-        if (loc) locations.push(loc);
-      });
-
-      processedCount += chunk.length;
-      report(processedCount, processedCount >= total);
-
-      if (chunkStart + chunkSize < remainingIps.length) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-      }
-    }
-  }
-
-  // Ensure cache is flushed
-  await flushCacheUpdates();
-
-  return locations;
 };
 
 // Calculate optimal map bounds based on locations
@@ -505,7 +140,7 @@ export const calculateMapBounds = (locations: StreamingLocation[]): {
 };
 
 // Generate fun text based on streaming locations
-export const generateLocationInsight = (locations: StreamingLocation[]): string => {
+export const generateLocationInsight = (locations: Pick<StreamingLocation, "city" | "country" | "sessionCount">[]): string => {
   if (locations.length === 0) {
     return "Looks like you're streaming from a secret location! 🕵️";
   }

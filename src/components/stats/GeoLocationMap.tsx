@@ -1,13 +1,24 @@
 // src/components/stats/GeoLocationMap.tsx
+// 3D streaming globe rendered with MapLibre GL on free OpenFreeMap vector tiles (no API key).
 
-import { useEffect, useMemo, useRef } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import { useEffect, useRef, useState } from "react";
+import maplibregl, { type GeoJSONSource, type LngLatLike } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Loader2, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { StreamingLocation } from "@/types/tautulli";
 
 interface GeoLocationMapProps {
   locations: StreamingLocation[];
 }
+
+const MAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
+const SOURCE_ID = "streaming-locations";
+const SPIN_DEGREES_PER_SECOND = 6;
+// On slow connections the style and first tiles can take a while; after this we show a retry option
+const LOAD_TIMEOUT_MS = 20000;
+
+type MapStatus = "loading" | "ready" | "failed" | "lost";
 
 const getFlagEmoji = (countryCode: string): string => {
   if (!countryCode || countryCode.length !== 2) return "";
@@ -18,182 +29,271 @@ const getFlagEmoji = (countryCode: string): string => {
   return String.fromCodePoint(...codePoints);
 };
 
-const cssHsl = (varName: string, fallbackHsl: string) => {
+// Reads a theme color variable ("173 80% 50%") and converts it to hex for MapLibre
+const cssHsl = (varName: string, fallback: string) => {
   try {
-    const raw = getComputedStyle(document.documentElement)
-      .getPropertyValue(varName)
-      .trim();
-    return raw ? `hsl(${raw})` : fallbackHsl;
+    const raw = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    const match = raw.match(/^([\d.]+)\s+([\d.]+)%\s+([\d.]+)%$/);
+    if (!match) return fallback;
+    const [h, s, l] = [Number(match[1]), Number(match[2]) / 100, Number(match[3]) / 100];
+    const k = (n: number) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const channel = (n: number) =>
+      Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))))
+        .toString(16)
+        .padStart(2, "0");
+    return `#${channel(0)}${channel(8)}${channel(4)}`;
   } catch {
-    return fallbackHsl;
+    return fallback;
   }
+};
+
+const hasWebGL = () => {
+  try {
+    const canvas = document.createElement("canvas");
+    return Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl"));
+  } catch {
+    return false;
+  }
+};
+
+const toGeoJSON = (locations: StreamingLocation[]): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
+  type: "FeatureCollection",
+  features: locations.map((loc, index) => ({
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [loc.lon, loc.lat] },
+    properties: { index, sessionCount: loc.sessionCount },
+  })),
+});
+
+// Popup content is built with DOM nodes (textContent) so location and user names are never parsed as HTML
+const buildPopup = (loc: StreamingLocation): HTMLElement => {
+  const root = document.createElement("div");
+  root.className = "pwft-map-popup-body";
+
+  const place = document.createElement("div");
+  place.className = "pwft-map-popup-title";
+  place.textContent = loc.city !== "Unknown" ? loc.city : loc.region || loc.country;
+  root.appendChild(place);
+
+  if (loc.city !== "Unknown" && loc.country !== loc.city) {
+    const country = document.createElement("div");
+    country.className = "pwft-map-popup-muted";
+    country.textContent = `${loc.country} ${getFlagEmoji(loc.countryCode)}`;
+    root.appendChild(country);
+  }
+
+  const dates = Array.from(new Set(loc.sessionDates || []));
+  const streams = document.createElement("button");
+  streams.type = "button";
+  streams.className = "pwft-map-popup-toggle";
+  streams.textContent = `${loc.sessionCount} stream${loc.sessionCount !== 1 ? "s" : ""}${dates.length > 0 ? " ▾" : ""}`;
+  streams.disabled = dates.length === 0;
+  root.appendChild(streams);
+
+  if (dates.length > 0) {
+    const list = document.createElement("div");
+    list.className = "pwft-map-popup-dates";
+    list.hidden = true;
+    dates.slice(0, 10).forEach((d) => {
+      const row = document.createElement("div");
+      row.textContent = d;
+      list.appendChild(row);
+    });
+    if (dates.length > 10) {
+      const more = document.createElement("div");
+      more.className = "pwft-map-popup-more";
+      more.textContent = `+ ${dates.length - 10} more sessions`;
+      list.appendChild(more);
+    }
+    streams.addEventListener("click", () => {
+      list.hidden = !list.hidden;
+    });
+    root.appendChild(list);
+  }
+  return root;
 };
 
 const GeoLocationMap = ({ locations }: GeoLocationMapProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.LayerGroup | null>(null);
-  const tileRef = useRef<L.TileLayer | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const locationsRef = useRef(locations);
+  const spinRef = useRef<{ active: boolean }>({ active: false });
+  const [ready, setReady] = useState(false);
+  const [unsupported] = useState(() => !hasWebGL());
+  const [status, setStatus] = useState<MapStatus>("loading");
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
-  const defaultCenter = useMemo<[number, number]>(() => {
-    if (locations.length === 0) return [20, 0];
-    const avgLat = locations.reduce((sum, l) => sum + l.lat, 0) / locations.length;
-    const avgLon = locations.reduce((sum, l) => sum + l.lon, 0) / locations.length;
-    return [avgLat, avgLon];
-  }, [locations]);
+  locationsRef.current = locations;
 
-  // Initialize Leaflet map (once)
+  // Initialize the map (again when the user retries)
   useEffect(() => {
-    if (!containerRef.current) return;
-    if (mapRef.current) return;
+    if (!containerRef.current || mapRef.current || unsupported) return;
 
-    const map = L.map(containerRef.current, {
-      zoomControl: true,
-      scrollWheelZoom: false,
-      attributionControl: true,
-      preferCanvas: true,
-    });
-
+    setStatus("loading");
+    setErrorText(null);
+    let map: maplibregl.Map;
+    try {
+      map = new maplibregl.Map({
+        container: containerRef.current,
+        style: MAP_STYLE,
+        center: [0, 20],
+        zoom: 1.2,
+        scrollZoom: false,
+        attributionControl: { compact: true },
+      });
+    } catch (error) {
+      setErrorText((error as Error).message);
+      setStatus("failed");
+      return;
+    }
     mapRef.current = map;
 
-    const tile = L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      {
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        subdomains: "abcd",
-        maxZoom: 19,
-      }
-    );
+    // Keep the last error so a failed load can say why
+    let loaded = false;
+    let lastError: string | null = null;
+    map.on("error", (e) => {
+      lastError = e.error?.message || "Unknown error";
+    });
+    const loadTimeout = window.setTimeout(() => {
+      if (loaded) return;
+      setErrorText(lastError);
+      setStatus("failed");
+    }, LOAD_TIMEOUT_MS);
 
-    tile.addTo(map);
-    tileRef.current = tile;
+    // Mobile browsers can drop WebGL contexts (e.g. when switching apps); MapLibre redraws when it's restored
+    map.on("webglcontextlost", () => setStatus("lost"));
+    map.on("webglcontextrestored", () => setStatus(loaded ? "ready" : "loading"));
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
-    const markers = L.layerGroup();
-    markers.addTo(map);
-    markersRef.current = markers;
-
-    map.setView(defaultCenter, 2);
-
-    const t = window.setTimeout(() => {
-      try {
-        map.invalidateSize();
-      } catch {
-        // ignore
-      }
-    }, 0);
-
-    return () => {
-      window.clearTimeout(t);
-      try {
-        map.remove();
-      } finally {
-        mapRef.current = null;
-        markersRef.current = null;
-        tileRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Update markers + fit bounds when locations change
-  useEffect(() => {
-    const map = mapRef.current;
-    const markers = markersRef.current;
-    if (!map || !markers) return;
-
-    markers.clearLayers();
-
-    if (locations.length === 0) {
-      map.setView([20, 0], 2);
-      return;
-    }
-
-    const cyan = cssHsl("--cyan", "hsl(173 80% 50%)");
-    const purple = cssHsl("--purple", "hsl(280 80% 55%)");
-
-    const maxSessions = Math.max(...locations.map((l) => l.sessionCount), 1);
-
-    locations.forEach((loc) => {
-      const radius = 8 + (loc.sessionCount / maxSessions) * 17;
-
-      const circle = L.circleMarker([loc.lat, loc.lon], {
-        radius,
-        color: purple,
-        weight: 2,
-        opacity: 0.9,
-        fillColor: cyan,
-        fillOpacity: 0.7,
-      });
-
-      const place = loc.city !== "Unknown" ? loc.city : loc.region || loc.country;
-      const countryLine =
-        loc.city !== "Unknown" && loc.country !== loc.city
-          ? `${loc.country} ${getFlagEmoji(loc.countryCode)}`
-          : "";
-      const streams = `${loc.sessionCount} stream${loc.sessionCount !== 1 ? "s" : ""}`;
-
-      const popupId = `popup-${loc.lat}-${loc.lon}`.replace(/\./g, '-');
-
-      const rawDates = loc.sessionDates || [];
-      const dates = Array.from(new Set(rawDates));
-      const displayDates = dates.slice(0, 10);
-      const hasMoreDates = dates.length > 10;
-
-      const datesListHtml = dates.length > 0
-        ? `<div id="${popupId}-dates" style="display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.2); max-height: 150px; overflow-y: auto;">
-            ${displayDates.map(d => `<div style="font-size: 11px; opacity: 0.85; padding: 2px 0;">${d}</div>`).join('')}
-            ${hasMoreDates ? `<div style="font-size: 11px; opacity: 0.6; font-style: italic; padding-top: 4px;">+ ${dates.length - 10} more sessions</div>` : ''}
-           </div>`
-        : '';
-
-      const html = `
-        <div style="font-size: 12px; line-height: 1.2; min-width: 140px;">
-          <div style="font-weight: 700;">${place}</div>
-          ${countryLine ? `<div style="opacity: .75; margin-top: 2px;">${countryLine}</div>` : ""}
-          <div style="margin-top: 6px;">
-            <span 
-              id="${popupId}-toggle"
-              style="font-weight: 600; ${dates.length > 0 ? 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;' : ''}"
-              ${dates.length > 0 ? `onclick="(function() {
-                var dates = document.getElementById('${popupId}-dates');
-                var toggle = document.getElementById('${popupId}-toggle');
-                if (dates) {
-                  if (dates.style.display === 'none') {
-                    dates.style.display = 'block';
-                    toggle.style.textDecorationStyle = 'solid';
-                  } else {
-                    dates.style.display = 'none';
-                    toggle.style.textDecorationStyle = 'dotted';
-                  }
-                }
-              })()"` : ''}
-            >${streams}</span>
-            ${dates.length > 0 ? '<span style="font-size: 10px; opacity: 0.6; margin-left: 4px;">▼</span>' : ''}
-          </div>
-          ${datesListHtml}
-        </div>
-      `;
-
-      circle.bindPopup(html, { maxWidth: 250 });
-      circle.addTo(markers);
+    map.on("style.load", () => {
+      map.setProjection({ type: "globe" });
     });
 
+    map.on("load", () => {
+      const cyan = cssHsl("--cyan", "#1ad1bd");
+      const purple = cssHsl("--purple", "#9c2ee6");
+      map.addSource(SOURCE_ID, { type: "geojson", data: toGeoJSON([]) });
+      map.addLayer({
+        id: "streaming-locations-glow",
+        type: "circle",
+        source: SOURCE_ID,
+        paint: { "circle-radius": ["+", 14, ["*", 20, ["get", "weight"]]], "circle-color": cyan, "circle-opacity": 0.15, "circle-blur": 1 },
+      });
+      map.addLayer({
+        id: "streaming-locations",
+        type: "circle",
+        source: SOURCE_ID,
+        paint: {
+          // Same sizing as before: 8px + up to 17px for the busiest location
+          "circle-radius": ["+", 8, ["*", 17, ["get", "weight"]]],
+          "circle-color": cyan,
+          "circle-opacity": 0.7,
+          "circle-stroke-color": purple,
+          "circle-stroke-width": 2,
+          "circle-stroke-opacity": 0.9,
+        },
+      });
+
+      map.on("click", "streaming-locations", (e) => {
+        const feature = e.features?.[0];
+        const loc = feature ? locationsRef.current[Number(feature.properties?.index)] : undefined;
+        if (!loc) return;
+        new maplibregl.Popup({ maxWidth: "250px", className: "pwft-map-popup" })
+          .setLngLat([loc.lon, loc.lat])
+          .setDOMContent(buildPopup(loc))
+          .addTo(map);
+      });
+      map.on("mouseenter", "streaming-locations", () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", "streaming-locations", () => (map.getCanvas().style.cursor = ""));
+      loaded = true;
+      window.clearTimeout(loadTimeout);
+      setReady(true);
+      setStatus("ready");
+    });
+
+    // Gentle auto-rotation until the user interacts with the globe
+    const spin = spinRef.current;
+    const stopSpin = () => {
+      spin.active = false;
+    };
+    map.on("mousedown", stopSpin);
+    map.on("touchstart", stopSpin);
+    map.on("wheel", stopSpin);
+    map.on("moveend", () => {
+      if (!spin.active || map.getZoom() > 3) return;
+      const center = map.getCenter();
+      map.easeTo({ center: [center.lng - SPIN_DEGREES_PER_SECOND, center.lat], duration: 1000, easing: (n) => n });
+    });
+
+    return () => {
+      window.clearTimeout(loadTimeout);
+      spin.active = false;
+      map.remove();
+      mapRef.current = null;
+      setReady(false);
+    };
+  }, [unsupported, attempt]);
+
+  // Update markers + camera when locations change
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    const maxSessions = Math.max(...locations.map((l) => l.sessionCount), 1);
+    const data = toGeoJSON(locations);
+    data.features.forEach((f) => {
+      f.properties!.weight = (f.properties!.sessionCount as number) / maxSessions;
+    });
+    (map.getSource(SOURCE_ID) as GeoJSONSource | undefined)?.setData(data);
+
     if (locations.length === 1) {
-      map.setView([locations[0].lat, locations[0].lon], 6);
-      return;
+      map.jumpTo({ center: [locations[0].lon, locations[0].lat] as LngLatLike, zoom: 4 });
+    } else if (locations.length > 1) {
+      const bounds = new maplibregl.LngLatBounds();
+      locations.forEach((l) => bounds.extend([l.lon, l.lat]));
+      map.fitBounds(bounds, { padding: 50, maxZoom: 6, animate: false });
     }
 
-    const bounds = L.latLngBounds(locations.map((l) => [l.lat, l.lon] as [number, number]));
-    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 10 });
-  }, [locations]);
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (!reducedMotion && map.getZoom() <= 3) {
+      spinRef.current.active = true;
+      map.fire("moveend");
+    }
+  }, [locations, ready]);
+
+  if (unsupported) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-sm text-muted-foreground p-6 text-center">
+        The streaming globe needs WebGL, which isn't available in this browser.
+      </div>
+    );
+  }
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full w-full"
-      aria-label="Streaming locations map"
-    />
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="pwft-globe h-full w-full" aria-label="Streaming locations globe" />
+      {status !== "ready" && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+          {status === "loading" ? (
+            <>
+              <Loader2 className="w-8 h-8 text-cyan animate-spin" />
+              <span>Loading globe…</span>
+            </>
+          ) : (
+            <>
+              <span>{status === "lost" ? "The globe was paused by your browser." : "The globe couldn't be loaded."}</span>
+              {status === "failed" && errorText && <span className="text-xs opacity-70 max-w-xs break-words">{errorText}</span>}
+              <Button variant="outline" size="sm" onClick={() => setAttempt((a) => a + 1)}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Reload globe
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 };
 

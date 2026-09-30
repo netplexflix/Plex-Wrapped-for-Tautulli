@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Plex Wrapped for Tautulli</title>
+    <!-- The server fills in the app name and icons set in the Admin Panel (server/pwa.ts) -->
+    <title>Plex Wrapped</title>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <meta name="description" content="Plex Wrapped for Tautulli" />
     <meta name="author" content="Netplexflix" />
@@ -12,6 +13,15 @@
     <meta property="og:description" content="Plex Wrapped for Tautulli" />
     <meta property="og:type" content="website" />
 
+    <!-- Installable app (PWA) -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="application-name" content="Plex Wrapped" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Plex Wrapped" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   </head>
 
   <body>

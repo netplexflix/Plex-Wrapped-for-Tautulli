@@ -3,8 +3,9 @@ export interface TautulliUser {
   username: string;
   friendly_name: string;
   thumb: string;
-  is_admin: boolean;
-  is_active: boolean;
+  email?: string;
+  is_admin?: boolean | number;
+  is_active?: boolean | number;
 }
 
 export interface WatchHistory {
@@ -108,12 +109,12 @@ export interface WrappedStats {
   mostRewatched: { title: string; rewatchCount: number } | null;
   topMoviesByUsers: { title: string; userCount: number; totalTime: number }[];
   topShowsByUsers: { title: string; userCount: number; totalTime: number }[];
-  peakConcurrentStreams: { count: number; date: string; time: string } | null;
-  streamingLocations: StreamingLocation[];
+  peakConcurrentStreams: { count: number; date: string; time: string; timestamp?: number } | null;
+  streamingLocations?: StreamingLocation[];
 }
 
 export interface StreamingLocation {
-  ip: string;
+  ip: string; // opaque id (raw IPs are never sent to the browser)
   city: string;
   region: string;
   country: string;
