@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Moon, CalendarDays, Flame, Sparkles, Sun, Clock, Sunrise, Zap, Heart } from "lucide-react";
+import { Moon, CalendarDays, Flame, Sparkles, Sun, Clock, Sunrise, Zap, Heart, AlarmClock, Hourglass } from "lucide-react";
 import { StatCard } from "./StatCard";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { formatDuration } from "@/lib/tautulli";
@@ -20,6 +20,7 @@ interface FunFactsProps {
   nightWatchTime: number;
   totalSessions: number;
   avgSessionLength: number;
+  longestBinge: { title: string; duration: number; date: string } | null;
 }
 
 type PersonalityColor = "purple" | "yellow" | "orange" | "cyan" | "pink";
@@ -63,6 +64,7 @@ export const FunFacts = ({
   nightWatchTime,
   totalSessions,
   avgSessionLength,
+  longestBinge,
 }: FunFactsProps) => {
   const getPersonality = () => {
     const totalTime = morningWatchTime + afternoonWatchTime + eveningWatchTime + nightWatchTime;
@@ -300,6 +302,19 @@ export const FunFacts = ({
           </div>
         </StatCard>
 
+        <StatCard delay={0.27}>
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-pink/20">
+              <AlarmClock className="w-6 h-6 text-pink" />
+            </div>
+            <div>
+              <p className="text-muted-foreground text-sm">Prime Time</p>
+              <p className="text-3xl font-bold text-foreground">{formatPeakHour(peakHour)}</p>
+              <p className="text-xs text-muted-foreground">{isGroup ? "the server's" : "your"} most-watched hour</p>
+            </div>
+          </div>
+        </StatCard>
+
         {mostBingedDay && (
           <StatCard delay={0.3}>
             <div className="flex items-start gap-4">
@@ -310,6 +325,22 @@ export const FunFacts = ({
                 <p className="text-muted-foreground text-sm mb-1">Most Epic Day</p>
                 <p className="text-2xl font-bold text-foreground">{formatDuration(mostBingedDay.duration)}</p>
                 <p className="text-xs text-muted-foreground">{mostBingedDay.date}</p>
+              </div>
+            </div>
+          </StatCard>
+        )}
+
+        {longestBinge && (
+          <StatCard delay={0.35}>
+            <div className="flex items-start gap-4">
+              <div className="p-3 rounded-xl bg-cyan/20">
+                <Hourglass className="w-6 h-6 text-cyan" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-muted-foreground text-sm mb-1">Longest Session</p>
+                <p className="text-2xl font-bold text-foreground">{formatDuration(longestBinge.duration)}</p>
+                <p className="text-sm text-foreground line-clamp-2">{longestBinge.title}</p>
+                <p className="text-xs text-muted-foreground">{longestBinge.date}</p>
               </div>
             </div>
           </StatCard>

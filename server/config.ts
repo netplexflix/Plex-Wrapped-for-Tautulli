@@ -54,6 +54,7 @@ export const normalizeSettings = (raw: any): AdminSettings => {
     logoMaxHeight: Number.isFinite(height) && height >= 20 && height <= 400 ? height : DEFAULT_ADMIN_SETTINGS.logoMaxHeight,
     enableGeolocation: Boolean(s.enableGeolocation),
     showLeaderboard: s.showLeaderboard !== false,
+    showViewerRank: Boolean(s.showViewerRank),
     nightlySyncTime: time,
     // Not trimmed here: the admin panel saves while typing, trailing spaces included
     appName: typeof s.appName === "string" ? s.appName.slice(0, 60) : DEFAULT_ADMIN_SETTINGS.appName,

@@ -5,9 +5,10 @@ import { AnimatedNumber } from "./AnimatedNumber";
 
 interface MostRewatchedProps {
   mostRewatched: { title: string; rewatchCount: number } | null;
+  isGroup?: boolean;
 }
 
-export const MostRewatched = ({ mostRewatched }: MostRewatchedProps) => {
+export const MostRewatched = ({ mostRewatched, isGroup = false }: MostRewatchedProps) => {
   if (!mostRewatched) return null;
 
   return (
@@ -31,7 +32,7 @@ export const MostRewatched = ({ mostRewatched }: MostRewatchedProps) => {
             transition={{ delay: 0.2 }}
             className="text-muted-foreground mb-2"
           >
-            Your comfort watch
+            {isGroup ? "The server's comfort watch" : "Your comfort watch"}
           </motion.p>
           <motion.h3
             initial={{ opacity: 0, scale: 0.9 }}
@@ -55,7 +56,7 @@ export const MostRewatched = ({ mostRewatched }: MostRewatchedProps) => {
               <span className="text-foreground font-bold">
                 <AnimatedNumber value={mostRewatched.rewatchCount} />
               </span>{" "}
-              times
+              times{isGroup ? " by one viewer" : ""}
             </span>
           </motion.div>
         </div>

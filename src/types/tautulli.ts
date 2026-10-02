@@ -71,17 +71,20 @@ export interface MediaInfo {
 
 export interface WrappedStats {
   totalWatchTime: number;
+  movieWatchTime: number;
+  /** People who watched something in the period */
+  activeUsers: number;
   totalMovies: number;
   totalShows: number;
   totalEpisodes: number;
   topMovie: { title: string; year: number; watchCount: number; totalTime: number; thumb?: string; userCount?: number } | null;
   topShow: { title: string; watchCount: number; totalTime: number; episodeCount: number; thumb?: string; userCount?: number } | null;
-  topMovies: { title: string; year: number; watchCount: number; totalTime: number; thumb?: string }[];
-  topShows: { title: string; watchCount: number; totalTime: number; episodeCount: number; thumb?: string }[];
+  topMovies: { title: string; year: number; watchCount: number; totalTime: number; thumb?: string; userCount: number }[];
+  topShows: { title: string; watchCount: number; totalTime: number; episodeCount: number; thumb?: string; userCount: number }[];
   watchByDay: { day: string; hours: number }[];
   watchByHour: { hour: number; minutes: number }[];
   watchByMonth: { month: string; hours: number }[];
-  watchByYear: { year: number; hours: number }[];
+  watchByYear: { year: number; hours: number; viewers: number }[];
   longestBinge: { title: string; duration: number; date: string } | null;
   lateNightSessions: number;
   weekendPercentage: number;
@@ -107,8 +110,6 @@ export interface WrappedStats {
   topDirectors: { name: string; count: number; titleCount: number; watchTime: number }[];
   contentDecades: { decade: string; count: number; watchTime: number }[];
   mostRewatched: { title: string; rewatchCount: number } | null;
-  topMoviesByUsers: { title: string; userCount: number; totalTime: number }[];
-  topShowsByUsers: { title: string; userCount: number; totalTime: number }[];
   peakConcurrentStreams: { count: number; date: string; time: string; timestamp?: number } | null;
   streamingLocations?: StreamingLocation[];
 }

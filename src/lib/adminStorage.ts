@@ -13,6 +13,7 @@ export interface AdminSettings {
   logoMaxHeight: number; // Max height in pixels for the logo
   enableGeolocation: boolean;
   showLeaderboard: boolean;
+  showViewerRank: boolean; // Tell viewers in the top half how their watch time ranks on the server
   nightlySyncTime: string; // "HH:mm", server timezone
   appName: string; // Installed app (PWA) name; empty = use the title
   currentYearFrom: string; // "MM-DD": from this date on, reports open on the current year instead of the previous one
@@ -29,6 +30,7 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
   logoMaxHeight: 80,
   enableGeolocation: false,
   showLeaderboard: true,
+  showViewerRank: false,
   nightlySyncTime: "03:00",
   appName: "",
   currentYearFrom: "12-01",

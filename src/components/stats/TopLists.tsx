@@ -4,12 +4,16 @@ import { StatCard } from "./StatCard";
 import { formatDuration } from "@/lib/tautulli";
 
 interface TopListsProps {
-  topMovies: { title: string; year: number; watchCount: number; totalTime: number }[];
-  topShows: { title: string; watchCount: number; totalTime: number; episodeCount: number }[];
+  topMovies: { title: string; year: number; watchCount: number; totalTime: number; userCount: number }[];
+  topShows: { title: string; watchCount: number; totalTime: number; episodeCount: number; userCount: number }[];
+  /** Everyone's report: titles are ranked by how many people watched them, so show that */
+  showViewers?: boolean;
 }
 
-export const TopLists = ({ topMovies, topShows }: TopListsProps) => {
+export const TopLists = ({ topMovies, topShows, showViewers = false }: TopListsProps) => {
   if (!topMovies.length && !topShows.length) return null;
+
+  const viewers = (count: number) => (showViewers ? ` · ${count} ${count === 1 ? "viewer" : "viewers"}` : "");
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -42,7 +46,10 @@ export const TopLists = ({ topMovies, topShows }: TopListsProps) => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-foreground truncate">{movie.title}</p>
-                  <p className="text-xs text-muted-foreground">{movie.year}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {movie.year}
+                    {viewers(movie.userCount)}
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-medium text-primary">{formatDuration(movie.totalTime)}</p>
@@ -85,7 +92,10 @@ export const TopLists = ({ topMovies, topShows }: TopListsProps) => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-foreground truncate">{show.title}</p>
-                  <p className="text-xs text-muted-foreground">{show.episodeCount} episodes</p>
+                  <p className="text-xs text-muted-foreground">
+                    {show.episodeCount} episodes
+                    {viewers(show.userCount)}
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-medium text-primary">{formatDuration(show.totalTime)}</p>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Eye, EyeOff, Lock, RefreshCw, Copy, Check, X, Users, Settings2, AlertCircle, Server, Key, Loader2, Image, Upload, Trash2, Trophy, Globe, Database, LogOut, ExternalLink, MonitorSmartphone, CalendarDays } from "lucide-react";
+import { Shield, Eye, EyeOff, Lock, RefreshCw, Copy, Check, X, Users, Settings2, AlertCircle, Server, Key, Loader2, Image, Upload, Trash2, Trophy, Medal, Globe, Database, LogOut, ExternalLink, MonitorSmartphone, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -891,6 +891,23 @@ export const AdminPanel = ({ isOpen, onClose }: AdminPanelProps) => {
                         id="show-leaderboard"
                         checked={settings.showLeaderboard}
                         onCheckedChange={checked => handleSettingChange('showLeaderboard', checked)}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="show-viewer-rank" className="text-base flex items-center gap-2">
+                          <Medal className="w-4 h-4" />
+                          Show Viewer Ranking
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Tell viewers in the top half how they rank, e.g. "more than 82% of viewers"
+                        </p>
+                      </div>
+                      <Switch
+                        id="show-viewer-rank"
+                        checked={settings.showViewerRank}
+                        onCheckedChange={checked => handleSettingChange('showViewerRank', checked)}
                       />
                     </div>
 

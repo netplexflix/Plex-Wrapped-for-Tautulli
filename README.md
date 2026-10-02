@@ -66,6 +66,7 @@ Choose how visitors reach their stats in the Admin Panel (`Settings` tab):
 > <img width="1916" height="316" alt="image" src="https://github.com/user-attachments/assets/6fe10045-d270-42f7-8c7a-cd76ac585f4b" />
 - **Streaming Locations:** Will show a globe of where streaming sessions originated from.
 - **Show Leaderboard:** Will show a user leaderboard in the "All Users" web report.
+- **Show Viewer Ranking:** Tells viewers in the top half how their watch time ranks on your server (e.g. "You watched more than 82% of viewers on this server"). Viewers in the bottom half don't see a ranking.
 - **Default Year:** Reports open on the previous year until this date (December 1st by default), then on the current year. Visitors can always pick another year.
 - **Installable App:** Set the name and icon the app gets when visitors install it (see below).
 

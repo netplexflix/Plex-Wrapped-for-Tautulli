@@ -95,29 +95,21 @@
     );
   }
 
+  /* The frame is a real border filled by a border-box gradient. A masked 1px overlay
+     dropped line segments wherever an edge fell between pixels (e.g. 125% display scaling). */
   .gradient-border {
+    --gradient-border-fill: linear-gradient(hsl(var(--card)), hsl(var(--card)));
     position: relative;
-    background: hsl(var(--card));
+    border: 1px solid transparent;
     border-radius: var(--radius);
-  }
-
-  .gradient-border::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    padding: 1px;
-    border-radius: inherit;
-    background: linear-gradient(
-      135deg,
-      hsl(var(--cyan)) 0%,
-      hsl(var(--purple)) 50%,
-      hsl(var(--pink)) 100%
-    );
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
+    background:
+      var(--gradient-border-fill) padding-box,
+      linear-gradient(
+        135deg,
+        hsl(var(--cyan)) 0%,
+        hsl(var(--purple)) 50%,
+        hsl(var(--pink)) 100%
+      ) border-box;
   }
 
   .glow {
@@ -135,7 +127,7 @@
 
   .stat-card {
     @apply gradient-border p-6 md:p-8;
-    background: linear-gradient(
+    --gradient-border-fill: linear-gradient(
       180deg,
       hsl(var(--card)) 0%,
       hsl(var(--background)) 100%

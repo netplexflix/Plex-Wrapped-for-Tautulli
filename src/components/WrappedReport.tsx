@@ -26,12 +26,13 @@ import { JourneyStats } from "./stats/JourneyStats";
 import { PlatformStats } from "./stats/PlatformStats";
 import { Leaderboard } from "./stats/Leaderboard";
 import { ContentDecades } from "./stats/ContentDecades";
-import { PopularWithGroup } from "./stats/PopularWithGroup";
 import { MostRewatched } from "./stats/MostRewatched";
 import { GenreStats } from "./stats/GenreStats";
 import { ActorStats } from "./stats/ActorStats";
 import { PeakConcurrent } from "./stats/PeakConcurrent";
 import { GeoLocationStats } from "./stats/GeoLocationStats";
+import { RelatableNumbers } from "./stats/RelatableNumbers";
+import { ThroughTheYears, hasThroughTheYears } from "./stats/ThroughTheYears";
 import { AdminPanel } from "./AdminPanel";
 import { ExportableStorySlides } from "./ExportableStorySlides";
 import { TautulliUser, StreamingLocation } from "@/types/tautulli";
@@ -326,6 +327,7 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
   const yearsCount = getYearsCount(oldestYear);
   const title = getTitle();
   const leaderboard = report?.leaderboard ?? [];
+  const reportHistory = report?.history ?? null;
 
   // Welcome screen: discreet mode without "All Users" before a username was entered
   const showWelcomeScreen = !canLoad && !stats;
@@ -666,7 +668,7 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
         </div>
       ) : stats && stats.totalWatchTime > 0 ? (
         <div className="max-w-4xl mx-auto px-4 pb-20 space-y-24">
-          <section>
+          <section className="space-y-6">
             <TotalStats
               totalWatchTime={stats.totalWatchTime}
               totalMovies={stats.totalMovies}
@@ -674,7 +676,10 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
               totalEpisodes={stats.totalEpisodes}
               isAllTime={isAllTime}
               yearsCount={yearsCount}
+              rank={report?.rank}
+              activeUsers={selectedUserId === null ? stats.activeUsers : undefined}
             />
+            <RelatableNumbers stats={stats} selection={yearSelection} isGroup={selectedUserId === null} />
           </section>
           {(stats.topMovie || stats.topShow) && (
             <section>
@@ -683,12 +688,13 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
           )}
           {(stats.topMovies.length > 0 || stats.topShows.length > 0) && (
             <section>
-              <TopLists topMovies={stats.topMovies} topShows={stats.topShows} />
+              <TopLists topMovies={stats.topMovies} topShows={stats.topShows} showViewers={selectedUserId === null} />
             </section>
           )}
           {yearSelection.type === "alltime" && stats.watchByYear && stats.watchByYear.length > 1 ? (
-            <section>
+            <section className="space-y-6">
               <YearlyTrends watchByYear={stats.watchByYear} />
+              {selectedUserId === null && <YearlyTrends watchByYear={stats.watchByYear} metric="viewers" />}
             </section>
           ) : (
             stats.watchByMonth.some((m) => m.hours > 0) && (
@@ -719,6 +725,7 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
               nightWatchTime={stats.nightWatchTime}
               totalSessions={stats.totalSessions}
               avgSessionLength={stats.avgSessionLength}
+              longestBinge={stats.longestBinge}
             />
           </section>
           <section>
@@ -730,6 +737,22 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
               isAllTime={isAllTime}
             />
           </section>
+
+          {hasThroughTheYears(reportHistory) && (
+            <section>
+              <ThroughTheYears
+                history={reportHistory}
+                current={{
+                  watchTime: stats.totalWatchTime,
+                  movies: stats.totalMovies,
+                  shows: stats.totalShows,
+                  episodes: stats.totalEpisodes,
+                }}
+                highlightYear={yearSelection.type === "year" ? yearSelection.year : undefined}
+                isGroup={selectedUserId === null}
+              />
+            </section>
+          )}
 
           {/* Geolocation Section - After Journey, Before Platforms */}
           {adminSettings.enableGeolocation && (geoLocations.length > 0 || geoLoading || geoTotalIPs > 0) && (
@@ -750,7 +773,7 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
           )}
           {stats.mostRewatched && (
             <section>
-              <MostRewatched mostRewatched={stats.mostRewatched} />
+              <MostRewatched mostRewatched={stats.mostRewatched} isGroup={selectedUserId === null} />
             </section>
           )}
           {stats.topGenres.length > 0 && (
@@ -761,11 +784,6 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
           {(stats.topActors.length > 0 || stats.topDirectors.length > 0) && (
             <section>
               <ActorStats actors={stats.topActors} directors={stats.topDirectors} />
-            </section>
-          )}
-          {selectedUserId === null && (stats.topMoviesByUsers.length > 0 || stats.topShowsByUsers.length > 0) && (
-            <section>
-              <PopularWithGroup topMoviesByUsers={stats.topMoviesByUsers} topShowsByUsers={stats.topShowsByUsers} />
             </section>
           )}
           {selectedUserId === null && stats.peakConcurrentStreams && (

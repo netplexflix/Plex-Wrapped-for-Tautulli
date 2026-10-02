@@ -44,10 +44,45 @@ export interface ReportUser {
   thumb: string;
 }
 
+/** Where a viewer stands among everyone who watched something in the period (only sent for the top half) */
+export interface ViewerRank {
+  /** Share of the other viewers who watched less */
+  percentile: number;
+  position: number;
+  viewers: number;
+}
+
+export interface PeriodSummary {
+  watchTime: number;
+  movies: number;
+  shows: number;
+  episodes: number;
+}
+
+/** The same stretch of time one year before the report period */
+export interface PreviousPeriod extends PeriodSummary {
+  /** "year": a whole year; "yearToDate": the previous year up to today's date; "rolling": the 12 months before */
+  kind: "year" | "yearToDate" | "rolling";
+  year: number;
+  /** The last day compared, for "yearToDate" */
+  until: string | null;
+}
+
+export interface ReportHistory {
+  /** Hours and viewers per year over the whole history (years without any as 0) */
+  yearly: { year: number; hours: number; viewers: number }[];
+  previous: PreviousPeriod | null;
+  firstSession: { title: string; date: string; year: number } | null;
+}
+
 export interface ReportResponse {
   stats: WrappedStats;
   user: ReportUser | null;
   leaderboard: LeaderboardEntry[];
+  /** Only for a single user's report, when the admin shows rankings */
+  rank: ViewerRank | null;
+  /** Not sent for All Time reports */
+  history: ReportHistory | null;
   oldestYear: number | null;
   generatedAt: number;
 }
