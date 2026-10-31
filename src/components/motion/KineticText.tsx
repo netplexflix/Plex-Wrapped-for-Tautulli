@@ -61,8 +61,10 @@ export const KineticText = ({
     "inline-block max-w-full align-bottom pt-[0.12em] pb-[0.14em] -mt-[0.12em] -mb-[0.14em] break-words",
     !done && "overflow-hidden",
   );
+  // A layer per piece only while they move: kept for good, every word of every heading would hold one
   const pieceClass = cn(
-    "inline-block will-change-transform",
+    "inline-block",
+    !done && "will-change-transform",
     gradient === "value" ? "gradient-value" : gradient && "gradient-text",
     pieceClassName,
   );

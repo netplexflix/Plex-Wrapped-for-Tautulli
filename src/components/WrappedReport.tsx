@@ -1,7 +1,7 @@
 // src/components/WrappedReport.tsx
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
+import { motion, useInView, useReducedMotion, useScroll, useTransform } from "framer-motion";
 import { RefreshCw, Settings, X, Shield, LogOut, Database, MonitorSmartphone, Share } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -102,6 +102,7 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
   const heroY = useTransform(heroProgress, [0, 1], [0, reduceMotion ? 0 : -140]);
   const heroScale = useTransform(heroProgress, [0, 1], [1, reduceMotion ? 1 : 0.9]);
   const heroOpacity = useTransform(heroProgress, [0, 0.8], [1, 0]);
+  const heroInView = useInView(heroRef);
 
   const stats = report?.stats ?? null;
   const oldestYear = report?.oldestYear ?? undefined;
@@ -399,7 +400,8 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
       <section ref={heroRef} className="hero-section min-h-screen flex flex-col items-center justify-center relative px-4 pt-16 pb-28">
         <HeroBackdrop />
         <Motes />
-        <motion.div style={{ y: heroY, scale: heroScale, opacity: heroOpacity }} className="relative text-center">
+        {/* A layer of its own, so scrolling moves and fades it without repainting its text every frame */}
+        <motion.div style={{ y: heroY, scale: heroScale, opacity: heroOpacity }} className="relative text-center [will-change:transform,opacity]">
           {showWelcomeScreen ? (
             <>
               {/* Logo for welcome screen */}
@@ -544,10 +546,11 @@ export const WrappedReport = ({ publicConfig, session, onRefresh }: WrappedRepor
                 className="flex flex-col items-center gap-2 p-3 text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:text-foreground"
               >
                 <span className="flex h-10 w-6 justify-center rounded-full border-2 border-current pt-2">
+                  {/* Only while the hero is on screen: the loop would otherwise run for as long as the page is open */}
                   <motion.span
                     className="h-2 w-1 rounded-full bg-current"
-                    animate={reduceMotion ? undefined : { y: [0, 12, 0], opacity: [1, 0.2, 1] }}
-                    transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+                    animate={reduceMotion || !heroInView ? { y: 0, opacity: 1 } : { y: [0, 12, 0], opacity: [1, 0.2, 1] }}
+                    transition={reduceMotion || !heroInView ? { duration: 0 } : { duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
                   />
                 </span>
                 <span className="text-[10px] font-semibold uppercase tracking-[0.3em]">Scroll</span>

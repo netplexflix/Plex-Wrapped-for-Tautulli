@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   animate,
   motion,
@@ -436,13 +436,20 @@ const FallingArm = ({ angle, delay, askew, shade, dim, lidLift, turn, bow, vanis
 };
 
 /** The ribbon coming undone: its arms spring loose and peel away, then it drops away as one */
-const FallingRibbon = ({ lidLift, turn }: { lidLift: MotionValue<number>; turn: MotionValue<number> }) => {
+const FallingRibbon = ({ lidLift, turn, onFallen }: {
+  lidLift: MotionValue<number>;
+  turn: MotionValue<number>;
+  /** Once it's out of sight, so its hundreds of pieces can be taken off the page */
+  onFallen: () => void;
+}) => {
   const drop = useMotionValue(0);
   const bow = useMotionValue(0);
   // It sinks into the shadow under the box: into the background's colour while still solid (each
   // link fading on its own would show where they overlap), then it's gone
   const vanish = useMotionValue(0);
   const fade = useMotionValue(1);
+  const fallen = useRef(onFallen);
+  fallen.current = onFallen;
 
   useEffect(() => {
     const falling = { delay: DROP_AT, duration: DROP_TIME };
@@ -450,7 +457,7 @@ const FallingRibbon = ({ lidLift, turn }: { lidLift: MotionValue<number>; turn: 
       animate(drop, DROP, { ...falling, ease: EASE_IN_QUAD }),
       animate(bow, CROSS_BOW, { ...falling, ease: "easeOut" }),
       animate(vanish, 1, { delay: DROP_AT + DROP_TIME * 0.45, duration: DROP_TIME * 0.47, ease: "easeIn" }),
-      animate(fade, 0, { delay: DROP_AT + DROP_TIME * 0.92, duration: DROP_TIME * 0.08 }),
+      animate(fade, 0, { delay: DROP_AT + DROP_TIME * 0.92, duration: DROP_TIME * 0.08, onComplete: () => fallen.current() }),
     ];
     return () => controls.forEach((c) => c.stop());
   }, [drop, bow, vanish, fade]);
@@ -491,20 +498,29 @@ const ArmShadow = ({ angle, delay, untied, lidLift }: { angle: number; delay: nu
 /**
  * The ribbon and its shadow on the paper. Tied, each arm is three light strips; once untied they're
  * swapped (in the same pose) for chains of links that can bend anywhere, joined by the cross under
- * the box.
+ * the box. Once it has fallen out of sight it's gone altogether, so the lid and the reveal don't
+ * share the frame with it.
  */
-const Ribbon = ({ untied, lidLift, turn }: { untied: boolean; lidLift: MotionValue<number>; turn: MotionValue<number> }) => (
-  <>
-    {PIECES.map((piece) => (
-      <ArmShadow key={piece.angle} angle={piece.angle} delay={piece.delay} untied={untied} lidLift={lidLift} />
-    ))}
-    {untied ? (
-      <FallingRibbon lidLift={lidLift} turn={turn} />
-    ) : (
-      PIECES.map((piece) => <TiedArm key={piece.angle} {...piece} lidLift={lidLift} turn={turn} />)
-    )}
-  </>
-);
+const Ribbon = ({ untied, lidLift, turn }: { untied: boolean; lidLift: MotionValue<number>; turn: MotionValue<number> }) => {
+  const [fallen, setFallen] = useState(false);
+  useEffect(() => {
+    if (!untied) setFallen(false);
+  }, [untied]);
+
+  if (untied && fallen) return null;
+  return (
+    <>
+      {PIECES.map((piece) => (
+        <ArmShadow key={piece.angle} angle={piece.angle} delay={piece.delay} untied={untied} lidLift={lidLift} />
+      ))}
+      {untied ? (
+        <FallingRibbon lidLift={lidLift} turn={turn} onFallen={() => setFallen(true)} />
+      ) : (
+        PIECES.map((piece) => <TiedArm key={piece.angle} {...piece} lidLift={lidLift} turn={turn} />)
+      )}
+    </>
+  );
+};
 
 /** The bow's two loops and knot; squashed as the bow's plucked off, then stretched as it flies */
 const BowLoops = ({ id, untied, idle, fade }: { id: string; untied: boolean; idle: boolean; fade: MotionValue<number> }) => {
@@ -633,11 +649,12 @@ export const GiftBox = ({ variant, phase = "idle", size = "md", tiltX, tiltY, ho
   const side = variant === "movie" ? 1 : -1;
   const accent = ACCENT[variant];
 
-  // Never quite still: a slow figure-eight sway (only while on screen), and a turn as the
-  // present scrolls through the screen. Both give way to the mouse while it's tilting the box.
+  // Never quite still: a slow figure-eight sway (only while on screen and still wrapped: once it's
+  // tapped it holds still to be opened), and a turn as the present scrolls through the screen. Both
+  // give way to the mouse while it's tilting the box.
   const swayTime = useMotionValue(0);
   useAnimationFrame((_, delta) => {
-    if (inView && !reduceMotion) swayTime.set(swayTime.get() + delta);
+    if (inView && !reduceMotion && phase === "idle") swayTime.set(swayTime.get() + delta);
   });
   const { scrollYProgress } = useScroll({ target: stageRef, offset: ["start end", "end start"] });
   const rotateY = useTransform([ty, hv, swayTime, scrollYProgress], ([t, h, s, p]: number[]) => {
@@ -673,7 +690,8 @@ export const GiftBox = ({ variant, phase = "idle", size = "md", tiltX, tiltY, ho
 
   const tied = phase === "idle";
   const lidOff = phase === "open" || phase === "burst";
-  const idle = phase === "idle" && !reduceMotion;
+  // The waiting loops (float, jiggle, shadow, bow) only run while the gift can be seen
+  const idle = phase === "idle" && !reduceMotion && inView;
 
   // The lid fades face by face (fading the whole 3D group would flatten it)
   const lidFade = useMotionValue(1);
@@ -704,7 +722,8 @@ export const GiftBox = ({ variant, phase = "idle", size = "md", tiltX, tiltY, ho
         }
         transition={{ duration: phase === "burst" ? 0.9 : 0.6, delay: phase === "open" ? 0.35 : 0, ease: EASE_OUT_EXPO }}
       >
-        <div className="gift-rays absolute inset-0 animate-spin-slow" />
+        {/* Turning only once there's light to see */}
+        <div className={cn("gift-rays absolute inset-0", lidOff && "animate-spin-slow")} />
       </motion.div>
 
       {/* Floor shadow */}
@@ -796,9 +815,10 @@ export const GiftBox = ({ variant, phase = "idle", size = "md", tiltX, tiltY, ho
           <Bow id={gradientId} untied={!tied} idle={idle} lidLift={lidLift} restY={restY} side={side} />
         </motion.div>
 
-        {/* Bloom over the mouth of the box */}
+        {/* Bloom over the mouth of the box (plain blending: a blend mode would have the whole 3D box
+            drawn off screen first, every frame) */}
         <motion.div
-          className="absolute pointer-events-none mix-blend-screen"
+          className="absolute pointer-events-none"
           style={{
             width: 300,
             height: 200,
@@ -836,7 +856,8 @@ export const GiftBox = ({ variant, phase = "idle", size = "md", tiltX, tiltY, ho
             width={sparkleSize}
             height={sparkleSize}
             className={cn("absolute animate-twinkle", i % 2 ? "text-yellow" : "text-white")}
-            style={{ left: `${left}%`, top: `${top}%`, animationDelay: `${delay}s` }}
+            // Held where they are (not reset) once they can't be seen
+            style={{ left: `${left}%`, top: `${top}%`, animationDelay: `${delay}s`, animationPlayState: tied && inView ? "running" : "paused" }}
           >
             <path d={STAR_PATH} fill="currentColor" />
           </svg>

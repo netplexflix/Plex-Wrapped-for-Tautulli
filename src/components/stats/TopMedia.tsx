@@ -56,7 +56,7 @@ export const TopMedia = ({ topMovie, topShow, topMovies = [], topShows = [], sho
             subtitle={`${topMovie.year}`}
             watchTime={topMovie.totalTime}
             playCount={topMovie.watchCount}
-            userCount={topMovie.userCount}
+            userCount={showViewers ? topMovie.userCount : undefined}
             imageUrl={topMovie.thumb ? getImageUrl(topMovie.thumb) : undefined}
             skipAnimations={skipAnimations}
             runnersUp={movieRunnersUp}
@@ -71,7 +71,7 @@ export const TopMedia = ({ topMovie, topShow, topMovies = [], topShows = [], sho
             subtitle={`${topShow.episodeCount} episodes watched`}
             watchTime={topShow.totalTime}
             playCount={topShow.watchCount}
-            userCount={topShow.userCount}
+            userCount={showViewers ? topShow.userCount : undefined}
             imageUrl={topShow.thumb ? getImageUrl(topShow.thumb) : undefined}
             skipAnimations={skipAnimations}
             runnersUp={showRunnersUp}
