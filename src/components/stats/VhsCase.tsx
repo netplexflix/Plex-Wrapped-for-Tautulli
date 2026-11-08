@@ -242,7 +242,8 @@ export const VhsCase = ({
     return () => controls.stop();
   }, [lid, open]);
 
-  const idle = phase === "idle" && !reduceMotion;
+  // The waiting loops (float, jiggle, shadow) only run while the case can be seen
+  const idle = phase === "idle" && !reduceMotion && inView;
   const lit = phase === "burst" ? 1 : phase === "open" ? 0.55 : 0;
 
   const stage = (
@@ -259,7 +260,8 @@ export const VhsCase = ({
         animate={phase === "burst" ? { opacity: 1, scale: 1.2 } : phase === "open" ? { opacity: 0.5, scale: 0.75 } : { opacity: 0, scale: 0.3 }}
         transition={{ duration: phase === "burst" ? 0.9 : 0.6, delay: phase === "open" ? 0.3 : 0, ease: EASE_OUT_EXPO }}
       >
-        <div className="gift-rays absolute inset-0 animate-spin-slow" />
+        {/* Turning only once there's light to see */}
+        <div className={cn("gift-rays absolute inset-0", lit > 0 && "animate-spin-slow")} />
       </motion.div>
 
       {/* Floor shadow */}
@@ -316,7 +318,7 @@ export const VhsCase = ({
           <Face w={W - 2 * RIM} h={H - 2 * RIM} transform={`translateZ(${D / 2 - 1}px)`} style={{ background: plastic.tray, borderRadius: 3 }}>
             <Cassette design={design} variant={variant} />
             <motion.div
-              className="absolute inset-0 mix-blend-screen"
+              className="absolute inset-0"
               style={{ background: "radial-gradient(closest-side, hsl(0 0% 100% / 0.85), hsl(var(--glow) / 0.5) 50%, transparent)" }}
               initial={false}
               animate={{ opacity: lit }}
@@ -383,9 +385,10 @@ export const VhsCase = ({
           </motion.div>
         </motion.div>
 
-        {/* Bloom over the open case */}
+        {/* Bloom over the open case (plain blending: a blend mode would have the whole 3D case drawn
+            off screen first, every frame) */}
         <motion.div
-          className="absolute pointer-events-none mix-blend-screen"
+          className="absolute pointer-events-none"
           style={{
             width: 260,
             height: 260,

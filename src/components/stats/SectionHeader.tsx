@@ -31,10 +31,10 @@ export const SectionHeader = ({
       transition={SPRING_POP}
       className="relative inline-flex mb-5"
     >
-      {/* Colours sweeping around behind the badge */}
+      {/* Colours sweeping around behind the badge, fading out softly around it */}
       <div
         aria-hidden
-        className="absolute -inset-2 rounded-full opacity-60 blur-md animate-spin-slow"
+        className="absolute -inset-8 rounded-full opacity-60 soft-edge [--soft-from:20%] animate-spin-slow"
         style={{ background: "conic-gradient(from 0deg, hsl(var(--cyan)), hsl(var(--purple)), hsl(var(--pink)), hsl(var(--cyan)))" }}
       />
       <div className="relative inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-card ring-1 ring-white/10">

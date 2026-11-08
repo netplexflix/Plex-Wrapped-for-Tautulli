@@ -60,11 +60,15 @@ export const TotalStats = ({
   return (
     <div className="space-y-6">
       <StatCard className="relative overflow-hidden text-center py-14">
-        {/* A slow halo behind the big number */}
+        {/* A slow halo behind the big number: a soft-edged colour wheel, its centre washed to one
+            colour (as a heavy blur would leave it) */}
         <div
           aria-hidden
-          className="absolute left-1/2 top-1/2 h-[140%] aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.12] blur-3xl animate-spin-slow pointer-events-none"
-          style={{ background: "conic-gradient(from 0deg, hsl(var(--cyan)), hsl(var(--purple)), hsl(var(--pink)), hsl(var(--cyan)))" }}
+          className="absolute left-1/2 top-1/2 h-[205%] aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.12] soft-edge [--soft-from:38%] animate-spin-slow pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(closest-side, hsl(var(--purple)), transparent 25%), conic-gradient(from 0deg, hsl(var(--cyan)), hsl(var(--purple)), hsl(var(--pink)), hsl(var(--cyan)))",
+          }}
         />
         <div className="relative">
           <motion.div
@@ -79,8 +83,15 @@ export const TotalStats = ({
 
           <p className="text-muted-foreground text-lg mb-2">{timeframeText}</p>
 
-          <div className="font-display text-7xl md:text-9xl font-extrabold tracking-tighter leading-none gradient-text-animated glow-text mb-3 py-1">
-            <AnimatedNumber value={hours} decimals={0} suffix="h" grouping />
+          {/* The glow is a copy behind the number, and the number has a layer of its own: the gradient
+              panning across it repaints only the number every frame, not the blurred glow */}
+          <div className="relative font-display text-7xl md:text-9xl font-extrabold tracking-tighter leading-none mb-3 py-1">
+            <div aria-hidden className="absolute inset-0 py-1 text-transparent glow-text">
+              <AnimatedNumber value={hours} decimals={0} suffix="h" grouping />
+            </div>
+            <div className="relative gradient-text-animated will-change-transform">
+              <AnimatedNumber value={hours} decimals={0} suffix="h" grouping />
+            </div>
           </div>
 
           {days > 0 && (

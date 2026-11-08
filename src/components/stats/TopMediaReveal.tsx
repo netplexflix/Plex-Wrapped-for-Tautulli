@@ -8,6 +8,7 @@ import { EASE_IN_OUT, EASE_OUT_EXPO, SPRING_POP, CARD_VIEWPORT, CARD_HIDDEN, CAR
 import { spotlightHandlers } from "@/lib/spotlight";
 import { usePointerTilt } from "@/hooks/use-pointer-tilt";
 import { useScrollReveal } from "@/hooks/use-scroll-reveal";
+import { usePosterWash } from "@/hooks/use-poster-wash";
 import { KineticText } from "@/components/motion/KineticText";
 import { useTheme } from "@/hooks/use-theme";
 import type { ThemeDecor } from "@/lib/themes";
@@ -156,6 +157,7 @@ const PosterDecor = ({ decor, type, title }: { decor: ThemeDecor; type: "movie" 
 const RevealedPoster = ({ layoutId, decor, children }: { layoutId: string; decor?: ReactNode; children: ReactNode }) => {
   const tilt = usePointerTilt(12);
   const glare = useMotionTemplate`radial-gradient(circle at ${tilt.glareX} ${tilt.glareY}, rgb(255 255 255 / 0.5), transparent 55%)`;
+  const [sparkling, setSparkling] = useState(true);
 
   return (
     <motion.div
@@ -183,32 +185,36 @@ const RevealedPoster = ({ layoutId, decor, children }: { layoutId: string; decor
         #1
       </motion.div>
 
-      {/* A few sparkles linger around the poster after the reveal */}
-      <motion.div
-        aria-hidden
-        className="absolute -inset-6 pointer-events-none"
-        initial={{ opacity: 1 }}
-        animate={{ opacity: 0 }}
-        transition={{ delay: 3, duration: 1.2 }}
-      >
-        {[
-          ["-2%", "12%", 14, 0],
-          ["96%", "38%", 10, 0.5],
-          ["8%", "92%", 12, 0.9],
-          ["88%", "4%", 9, 1.3],
-        ].map(([left, top, size, delay], i) => (
-          <svg
-            key={i}
-            viewBox="0 0 24 24"
-            width={size as number}
-            height={size as number}
-            className="absolute animate-twinkle text-yellow"
-            style={{ left: left as string, top: top as string, animationDelay: `${delay}s` }}
-          >
-            <path d={STAR_PATH} fill="currentColor" />
-          </svg>
-        ))}
-      </motion.div>
+      {/* A few sparkles linger around the poster after the reveal (then they're gone for good, so
+          their twinkling stops too) */}
+      {sparkling && (
+        <motion.div
+          aria-hidden
+          className="absolute -inset-6 pointer-events-none"
+          initial={{ opacity: 1 }}
+          animate={{ opacity: 0 }}
+          transition={{ delay: 3, duration: 1.2 }}
+          onAnimationComplete={() => setSparkling(false)}
+        >
+          {[
+            ["-2%", "12%", 14, 0],
+            ["96%", "38%", 10, 0.5],
+            ["8%", "92%", 12, 0.9],
+            ["88%", "4%", 9, 1.3],
+          ].map(([left, top, size, delay], i) => (
+            <svg
+              key={i}
+              viewBox="0 0 24 24"
+              width={size as number}
+              height={size as number}
+              className="absolute animate-twinkle text-yellow"
+              style={{ left: left as string, top: top as string, animationDelay: `${delay}s` }}
+            >
+              <path d={STAR_PATH} fill="currentColor" />
+            </svg>
+          ))}
+        </motion.div>
+      )}
     </motion.div>
   );
 };
@@ -252,6 +258,7 @@ export const TopMediaReveal = ({
   const Icon = accent.icon;
   const posterId = `top-${type}-poster`;
   const poster = imageUrl && imageUrl !== failedImage ? imageUrl : undefined;
+  const wash = usePosterWash(stage === "revealed" ? poster : undefined);
   const posterImage = (
     <PosterImage imageUrl={poster} title={title} icon={Icon} iconClassName={accent.iconText} onError={() => setFailedImage(imageUrl ?? null)} />
   );
@@ -312,18 +319,20 @@ export const TopMediaReveal = ({
       className="relative"
     >
       <div {...spotlightHandlers} className="stat-card relative z-10">
-        {/* Once revealed, the card takes on the poster's colours */}
+        {/* Once revealed, the card takes on the poster's colours: a tiny copy of it stretched over the
+            card (a CSS blur this size is too heavy for phones, two cards at once especially) */}
         {revealed && (
           <div aria-hidden className="absolute inset-0 overflow-hidden rounded-[inherit] pointer-events-none">
-            {poster ? (
-              <motion.img
-                src={poster}
-                alt=""
-                initial={{ opacity: 0, scale: 1.8 }}
-                animate={{ opacity: 0.45, scale: 1.5 }}
-                transition={{ duration: 1.4, ease: EASE_OUT_EXPO }}
-                className="absolute inset-0 w-full h-full object-cover blur-3xl saturate-150"
-              />
+            {poster && wash !== null ? (
+              wash && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 1.8 }}
+                  animate={{ opacity: 0.45, scale: 1.5 }}
+                  transition={{ duration: 1.4, ease: EASE_OUT_EXPO }}
+                  className="absolute inset-0 bg-cover bg-center saturate-150"
+                  style={{ backgroundImage: `url("${wash}")` }}
+                />
+              )
             ) : (
               <motion.div
                 initial={{ opacity: 0 }}

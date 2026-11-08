@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { animate, motion, useInView, useMotionValue, useTransform } from "framer-motion";
 import { VIEWPORT } from "@/lib/motion";
 
@@ -27,11 +27,14 @@ export const AnimatedNumber = ({
   // Counts up whenever it comes into view, and back down when it leaves, so scrolling back replays it
   const isInView = useInView(ref, VIEWPORT);
   const count = useMotionValue(0);
+  // Made once: toLocaleString with options builds a new formatter on every frame of the count
+  const formatter = useMemo(
+    () => new Intl.NumberFormat(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }),
+    [decimals],
+  );
 
   const display = useTransform(count, (current) => {
-    const number = grouping
-      ? current.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-      : current.toFixed(decimals);
+    const number = grouping ? formatter.format(current) : current.toFixed(decimals);
     return `${prefix}${number}${suffix}`;
   });
 

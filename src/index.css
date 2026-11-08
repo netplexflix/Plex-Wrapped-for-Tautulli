@@ -569,6 +569,8 @@
 
   .bg-noise {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    /* Drawn once as a small tile (it stitches seamlessly) rather than as one screen-sized image */
+    background-size: 256px 256px;
     opacity: 0.03;
   }
 
@@ -669,6 +671,13 @@
 
   .animate-spin-slow {
     animation: spin 12s linear infinite;
+  }
+
+  /* A round glow's soft edge, from a mask instead of a blur: a blur on something that spins is
+     redone every frame, a mask is drawn once (--soft-from: how far out it stays solid) */
+  .soft-edge {
+    -webkit-mask-image: radial-gradient(closest-side, #000 var(--soft-from, 30%), transparent);
+    mask-image: radial-gradient(closest-side, #000 var(--soft-from, 30%), transparent);
   }
 
   .animate-spin-slow-reverse {
